@@ -1,0 +1,18 @@
+# Vaults are machine-local — never commit keyfiles or DBs
+*.kdbx
+*.key
+*.keyx
+
+# Local pointer files
+.vault
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
