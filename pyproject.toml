@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kpin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Inject secrets from a KeePassXC vault into dev commands, without printing them."
 requires-python = ">=3.9"
 dependencies = ["pykeepass>=4.0"]

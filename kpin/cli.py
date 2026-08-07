@@ -175,10 +175,11 @@ def _open(config: ProjectConfig):
     return PyKeePass(str(config.db), keyfile=str(config.keyfile))
 
 
-def _entry(kp, config: ProjectConfig):
-    entry = kp.find_entries(title=config.entry, first=True)
+def _entry(kp, config: ProjectConfig, entry_name: str | None = None):
+    title = entry_name or config.entry
+    entry = kp.find_entries(title=title, first=True)
     if entry is None:
-        raise KpinError(f"Entry '{config.entry}' not found in {config.db}")
+        raise KpinError(f"Entry '{title}' not found in {config.db}")
     return entry
 
 
@@ -249,61 +250,129 @@ def cmd_init(args) -> int:
     return 0
 
 
+def _value_from_stdin(args) -> str | None:
+    if getattr(args, "stdin", False):
+        return sys.stdin.read().rstrip("\n")
+    return getattr(args, "value", None)
+
+
 def cmd_set(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
     kp = _open(config)
-    entry = _entry(kp, config)
+    entry = _entry(kp, config, args.entry)
 
-    key, value = args.key, args.value
-    if args.stdin:
-        value = sys.stdin.read().rstrip("\n")
-    if value is None:
-        print("Missing value (use --stdin or a value argument)", file=sys.stderr)
-        return 1
-    entry.set_custom_property(key, value)
-    kp.save()
-    print(f"Set {key} on '{config.entry}'")
-    return 0
+    if args.kind == "password":
+        value = _value_from_stdin(args)
+        if value is None:
+            print("Missing value (use --stdin or a value argument)", file=sys.stderr)
+            return 1
+        entry.password = value
+        kp.save()
+        print(f"Set password on '{entry.title}'")
+        return 0
+
+    if args.kind == "attribute":
+        value = _value_from_stdin(args)
+        if value is None:
+            print("Missing value (use --stdin or a value argument)", file=sys.stderr)
+            return 1
+        entry.set_custom_property(args.key, value)
+        kp.save()
+        print(f"Set {args.key} on '{entry.title}'")
+        return 0
+
+    if args.kind == "attachment":
+        path = Path(args.file).expanduser()
+        if not path.is_file():
+            raise KpinError(f"File not found: {path}")
+        binary_id = kp.add_binary(path.read_bytes())
+        entry.add_attachment(binary_id, path.name)
+        kp.save()
+        print(f"Attached {path.name} to '{entry.title}'")
+        return 0
+
+    print(f"Unknown set kind: {args.kind}", file=sys.stderr)
+    return 1
 
 
-def _get_value(config: ProjectConfig, key: str) -> str:
+def _get_attribute(config: ProjectConfig, key: str, entry_name: str | None) -> str:
     kp = _open(config)
-    entry = _entry(kp, config)
+    entry = _entry(kp, config, entry_name)
     value = entry.get_custom_property(key)
     if value is None:
-        raise KpinError(f"Secret '{key}' not found on entry '{config.entry}'")
+        raise KpinError(f"Attribute '{key}' not found on entry '{entry.title}'")
     return value
 
 
-def cmd_attach(args) -> int:
-    config = resolve_config(args.project, args.config)
-    _require(config)
+def _attachment(config: ProjectConfig, name: str, entry_name: str | None):
     kp = _open(config)
-    entry = _entry(kp, config)
-    path = Path(args.file).expanduser()
-    if not path.is_file():
-        raise KpinError(f"File not found: {path}")
-    data = path.read_bytes()
-    binary_id = kp.add_binary(data)
-    entry.add_attachment(binary_id, path.name)
-    kp.save()
-    print(f"Attached {path.name} to '{config.entry}'")
+    entry = _entry(kp, config, entry_name)
+    for attachment in entry.attachments:
+        if attachment.filename == name:
+            return attachment
+    raise KpinError(
+        f"Attachment '{name}' not found on entry '{entry.title}'"
+        f" (have: {', '.join(a.filename for a in entry.attachments) or 'none'})"
+    )
+
+
+def _output_path(output: str, filename: str) -> Path:
+    out = Path(output).expanduser()
+    if (
+        out.is_dir()
+        or str(out).endswith(os.sep)
+        or (out.suffix == "" and not out.exists())
+    ):
+        out = out / filename
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _list_attachments(config: ProjectConfig, entry_name: str | None) -> int:
+    kp = _open(config)
+    entry = _entry(kp, config, entry_name)
+    for attachment in entry.attachments:
+        print(attachment.filename)
     return 0
 
 
 def cmd_get(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
-    print(_get_value(config, args.key))
-    return 0
+
+    if args.kind == "password":
+        kp = _open(config)
+        entry = _entry(kp, config, args.entry)
+        print(entry.password)
+        return 0
+
+    if args.kind == "attribute":
+        print(_get_attribute(config, args.key, args.entry))
+        return 0
+
+    if args.kind == "attachment":
+        if not args.name:
+            return _list_attachments(config, args.entry)
+        attachment = _attachment(config, args.name, args.entry)
+        data = attachment.binary
+        if not args.output:
+            sys.stdout.buffer.write(data)
+            return 0
+        out = _output_path(args.output, attachment.filename)
+        out.write_bytes(data)
+        print(out)
+        return 0
+
+    print(f"Unknown get kind: {args.kind}", file=sys.stderr)
+    return 1
 
 
 def cmd_env(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
     kp = _open(config)
-    entry = _entry(kp, config)
+    entry = _entry(kp, config, args.entry)
     for prop in entry.custom_properties:
         value = entry.get_custom_property(prop)
         print(f"{prop}={value or ''}")
@@ -313,40 +382,36 @@ def cmd_env(args) -> int:
 def cmd_run(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
-    env = dict(os.environ)
     kp = _open(config)
-    entry = _entry(kp, config)
+    entry = _entry(kp, config, args.entry)
     command = _strip_sep(args.cmd)
+    if not command:
+        print("Missing command to run", file=sys.stderr)
+        return 1
+
+    env = dict(os.environ)
     for prop in entry.custom_properties:
         value = entry.get_custom_property(prop)
         env[prop] = value or ""
-    return subprocess.call(command, env=env)
 
-
-def cmd_materialize(args) -> int:
-    config = resolve_config(args.project, args.config)
-    _require(config)
-    kp = _open(config)
-    entry = _entry(kp, config)
-    if not entry.attachments:
-        raise KpinError(f"Entry '{config.entry}' has no attachments")
-    attachment = entry.attachments[0]
-    with tempfile.NamedTemporaryFile(delete=False, prefix="kpin-") as fh:
-        fh.write(attachment.binary)
-        path = fh.name
-    try:
-        env = dict(os.environ)
+    if args.name:
+        attachment = _attachment(config, args.name, args.entry)
+        if args.output:
+            out = _output_path(args.output, attachment.filename)
+            out.write_bytes(attachment.binary)
+            path = str(out)
+        else:
+            with tempfile.NamedTemporaryFile(delete=False, prefix="kpin-") as fh:
+                fh.write(attachment.binary)
+                path = fh.name
         env["KPIN_FILE"] = path
-        for prop in entry.custom_properties:
-            value = entry.get_custom_property(prop)
-            env[prop] = value or ""
-        command = _strip_sep(args.cmd)
-        if not command:
-            print(path)
-            return 0
-        return subprocess.call(command, env=env)
-    finally:
-        os.unlink(path)
+        try:
+            return subprocess.call(command, env=env)
+        finally:
+            if not args.keep:
+                os.unlink(path)
+
+    return subprocess.call(command, env=env)
 
 
 def _strip_sep(command: list[str]) -> list[str]:
@@ -366,6 +431,30 @@ def cmd_validate(args) -> int:
         ok = k not in missing
         print(f"{k}: {'present' if ok else 'missing'}")
     return 1 if missing else 0
+
+
+def cmd_entry(args) -> int:
+    config = resolve_config(args.project, args.config)
+    _require(config)
+    kp = _open(config)
+
+    if args.kind == "add":
+        title = args.title
+        if kp.find_entries(title=title, first=True) is not None:
+            print(f"Entry '{title}' already exists", file=sys.stderr)
+            return 1
+        kp.add_entry(kp.root_group, title, username="", password="")
+        kp.save()
+        print(f"Created entry '{title}'")
+        return 0
+
+    if args.kind == "list":
+        for entry in kp.entries:
+            print(entry.title)
+        return 0
+
+    print(f"Unknown entry kind: {args.kind}", file=sys.stderr)
+    return 1
 
 
 def cmd_config(args) -> int:
@@ -434,29 +523,77 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="show active vault")
     add_common(p)
 
-    p = sub.add_parser("set", help="set a secret")
-    add_common(p)
-    p.add_argument("key")
-    p.add_argument("value", nargs="?")
-    p.add_argument("--stdin", action="store_true", help="read value from stdin")
+    p = sub.add_parser("entry", help="add or list vault entries")
+    entry_kind = p.add_subparsers(dest="kind", required=True)
 
-    p = sub.add_parser("attach", help="set the entry's binary attachment")
-    add_common(p)
-    p.add_argument("file", help="path to the binary file to attach")
+    ep = entry_kind.add_parser("add", help="create a new entry")
+    add_common(ep)
+    ep.add_argument("title", help="entry title")
 
-    p = sub.add_parser("get", help="print a secret (reveals it)")
-    add_common(p)
-    p.add_argument("key")
+    ep = entry_kind.add_parser("list", help="list entry titles")
+    add_common(ep)
 
-    p = sub.add_parser("env", help="print all secrets as KEY=value")
+    p = sub.add_parser("set", help="set a password, attribute, or attachment")
+    set_kind = p.add_subparsers(dest="kind", required=True)
+
+    sp = set_kind.add_parser("password", help="set the entry's password field")
+    add_common(sp)
+    sp.add_argument("value", nargs="?", help="new password")
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+    sp.add_argument("--stdin", action="store_true", help="read value from stdin")
+
+    sp = set_kind.add_parser("attribute", help="set an attribute (custom property)")
+    add_common(sp)
+    sp.add_argument("key", help="attribute key")
+    sp.add_argument("value", nargs="?", help="attribute value")
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+    sp.add_argument("--stdin", action="store_true", help="read value from stdin")
+
+    sp = set_kind.add_parser("attachment", help="attach a binary file to the entry")
+    add_common(sp)
+    sp.add_argument("file", help="path to the file to attach")
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+
+    p = sub.add_parser("get", help="reveal a password, attribute, or attachment")
+    get_kind = p.add_subparsers(dest="kind", required=True)
+
+    sp = get_kind.add_parser("password", help="print the entry's password field")
+    add_common(sp)
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+
+    sp = get_kind.add_parser("attribute", help="print an attribute value")
+    add_common(sp)
+    sp.add_argument("key", help="attribute key")
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+
+    sp = get_kind.add_parser("attachment", help="list or extract an attachment")
+    add_common(sp)
+    sp.add_argument("--entry", help="entry title (default: configured entry)")
+    sp.add_argument(
+        "--name",
+        help="attachment filename (omit to list stored names)",
+    )
+    sp.add_argument(
+        "--output",
+        help="write attachment here (dir keeps stored name, or exact path)",
+    )
+
+    p = sub.add_parser("env", help="print all attributes as KEY=value")
     add_common(p)
+    p.add_argument("--entry", help="entry title (default: configured entry)")
 
     p = sub.add_parser("run", help="run a command with secrets injected")
     add_common(p)
-    p.add_argument("cmd", nargs=argparse.REMAINDER)
-
-    p = sub.add_parser("materialize", help="export attachment to temp file and run")
-    add_common(p)
+    p.add_argument("--entry", help="entry title (default: configured entry)")
+    p.add_argument(
+        "--name",
+        help="also materialize this attachment as $KPIN_FILE (exact stored filename)",
+    )
+    p.add_argument(
+        "--output",
+        help="write the materialized attachment here (dir keeps stored name, or exact path)",
+    )
+    p.add_argument("--keep", action="store_true", help="keep the materialized file")
     p.add_argument("cmd", nargs=argparse.REMAINDER)
 
     p = sub.add_parser("validate", help="check required secrets are present")
@@ -471,12 +608,11 @@ def dispatch(args) -> int:
         "init": cmd_init,
         "config": cmd_config,
         "status": cmd_status,
+        "entry": cmd_entry,
         "set": cmd_set,
-        "attach": cmd_attach,
         "get": cmd_get,
         "env": cmd_env,
         "run": cmd_run,
-        "materialize": cmd_materialize,
         "validate": cmd_validate,
     }
     return handlers[args.command](args)

@@ -40,14 +40,16 @@ def test_run_strips_double_dash(isolated_env, mock_vault):
     assert r["rc"] == 0
 
 
-def test_materialize_runs_child_with_file_and_cleans_up(isolated_env, mock_vault):
+def test_run_with_attachment_temp_cleans_up(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
     outfile = str(mock_vault["home"] / "mat.out")
     r = run_cli(
         [
-            "materialize",
+            "run",
             "--config",
             cfg,
+            "--name",
+            mock_vault["att_name"],
             "--",
             sys.executable,
             "-c",
@@ -60,6 +62,30 @@ def test_materialize_runs_child_with_file_and_cleans_up(isolated_env, mock_vault
     assert open(outfile, "rb").read() == mock_vault["att_bytes"]
     assert open(outfile + ".ex").read() == "1"
     assert not list(Path(tempfile.gettempdir()).glob("kpin-*"))
+
+
+def test_run_with_attachment_output_dir_keeps_file(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    out_dir = mock_vault["home"] / "out"
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--name",
+            mock_vault["att_name"],
+            "--output",
+            str(out_dir),
+            "--keep",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ]
+    )
+    assert r["rc"] == 0
+    written = out_dir / mock_vault["att_name"]
+    assert written.read_bytes() == mock_vault["att_bytes"]
 
 
 def test_run_propagates_child_exit_code(isolated_env, mock_vault):

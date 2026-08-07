@@ -2,11 +2,11 @@
 
 Inject secrets from a KeePassXC vault into dev commands — without printing them to stdout.
 
-`kpin` gives you a KeePassXC-backed vault per project, and injects secrets into a child process environment (or materializes a binary attachment to a temp file) so values never land in shell history, logs, or an agent's context.
+`kpin` gives you a KeePassXC-backed vault per project, and injects secrets into a child process environment (or materializes a binary attachment to a file) so values never land in shell history, logs, or an agent's context.
 
 ## Why
 
-- **Env-var-only tools (kprun, op run) can't do attachments or temp files.** `kpin run` injects env vars, and `kpin materialize` exports a binary attachment (e.g. Android keystore, Firebase config) to a temp file that is deleted afterward. This covers the cases the others miss.
+- **Env-var-only tools (kprun, op run) can't do attachments or files.** `kpin run` injects env vars and can also materialize a named binary attachment (e.g. Android keystore, certificate) to a temp file or a directory of your choice. This covers the cases the others miss.
 - **One database = one trust boundary.** Each project has its own vault + keyfile, so project A cannot read project B. No per-entry permissions needed.
 - **Cross-platform.** Pure-Python stdlib + `pykeepass` + `keepassxc-cli` (optional). Works on Linux, macOS, Windows.
 
@@ -28,28 +28,42 @@ Requires a KeePassXC-compatible KDBX vault. Install KeePassXC (optional, for `kp
 
 ```bash
 cd my-project
-kpin init                # creates ~/.kpin/<project>.kdbx + ~/.keys/<project>.key + local .kpin
-kpin set API_KEY --stdin # or: kpin set API_KEY 'value'
-kpin run -- node app.js  # injects API_KEY into the child env only
+kpin init                  # creates vault + keyfile + local .kpin pointer
+kpin entry add "API Keys"  # create a named entry (default entry is 'default')
+kpin set attribute API_KEY --stdin           # or: kpin set attribute API_KEY 'value'
+kpin run -- node app.js    # injects attributes into the child env only
 
-# Binary attachment (e.g. Android keystore)
-kpin attach debug.keystore
-kpin materialize -- gradlew assembleDebug   # writes temp file, sets $KPIN_FILE, runs, deletes
+# Reveal secrets deliberately (human/pipe only — never agent automation)
+kpin get attribute API_KEY                  # default entry
+kpin get password --entry "API Keys"        # a specific entry's password
+kpin get attribute openai_token --entry "AI Providers"
+
+# Binary attachment (e.g. Android keystore, certificate)
+kpin set attachment debug.keystore
+kpin get attachment                 # list attachment names
+kpin get attachment --name debug.keystore --output ./certs   # extract, keep name
+kpin run --name debug.keystore -- gradlew assembleDebug      # temp file, $KPIN_FILE, auto-cleanup
 ```
 
 ## Commands
 
+Every secret access is explicit about **type**, **entry**, and (for attachments) **which file + where it lands**. `--entry NAME` selects an entry by title; omitted → the configured entry (usually `default`).
+
 | Command | Description |
 |---|---|
 | `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.kpin` |
+| `kpin config [KEY [VALUE]]` / `--unset` / `show` | Manage global settings (`vault_dir`, `key_dir`) |
 | `kpin status` | Show the active vault |
-| `kpin set KEY [VALUE]` / `--stdin` | Set a secret on the entry |
-| `kpin attach FILE` | Attach a binary file to the entry |
-| `kpin get KEY` | Print a secret (reveals it — use deliberately) |
-| `kpin env` | Print all secrets as `KEY=value` |
-| `kpin run [--] CMD...` | Run a command with secrets injected as env vars |
-| `kpin materialize [--] [CMD...]` | Write the attachment to a temp file, export it as `$KPIN_FILE`, run CMD, delete it |
-| `kpin validate [KEY...]` | Check required secrets are present |
+| `kpin entry add TITLE` / `kpin entry list` | Create or list entries |
+| `kpin set password [VALUE\|--stdin] [--entry NAME]` | Set an entry's password field |
+| `kpin set attribute KEY [VALUE\|--stdin] [--entry NAME]` | Set an attribute (custom property) |
+| `kpin set attachment FILE [--entry NAME]` | Attach a binary file (stored under its filename) |
+| `kpin get password [--entry NAME]` | Reveal an entry's password |
+| `kpin get attribute KEY [--entry NAME]` | Reveal an attribute value |
+| `kpin get attachment [--entry NAME] [--name FILE] [--output DIR\|PATH]` | List attachment names, or extract one to a dir (keeps stored name) or exact path |
+| `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
+| `kpin run [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`) |
+| `kpin validate [KEY...]` | Check required attributes are present |
 
 ## Config resolution
 
@@ -91,7 +105,7 @@ Vaults and keyfiles are kept in separate directories by default so a synced vaul
 - Keyfile-only vaults: the keyfile **is** the secret. Never sync `~/.keys/*.key` to the cloud.
 - `kpin get`/`kpin env` print values to stdout — intended for humans or explicit piping, not agents.
 - `kpin run` prints nothing about the secrets; the child inherits them in env only.
-- `kpin materialize` cleans up the temp file in a `finally` block.
+- `kpin run --name FILE` cleans up the temp file after the child exits (unless `--keep`).
 
 ## License
 
