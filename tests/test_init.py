@@ -48,3 +48,30 @@ def test_init_refuses_existing_vault(isolated_env, mock_vault, monkeypatch):
     r = run_cli(["init", "--project", "existing"], cwd=str(proj))
     assert r["rc"] == 1
     assert "already exists" in r["err"]
+
+
+def test_init_warns_and_aborts_on_registered_name(
+    isolated_env, write_registry, mock_vault
+):
+    write_registry()
+    proj = mock_vault["home"] / "proj"
+    proj.mkdir()
+    r = run_cli(["init", "--project", "mock"], cwd=str(proj), input="n\n")
+    assert r["rc"] == 1
+    assert "already registered" in r["err"]
+    assert "Aborted" in r["err"]
+    assert not (proj / ".kpin").exists()
+
+
+def test_init_reuses_existing_vault_on_confirm(
+    isolated_env, write_registry, mock_vault
+):
+    write_registry()
+    proj = mock_vault["home"] / "proj"
+    proj.mkdir()
+    r = run_cli(["init", "--project", "mock"], cwd=str(proj), input="y\n")
+    assert r["rc"] == 0
+    assert "Linked to existing vault" in r["out"]
+    local = proj / ".kpin"
+    assert local.exists()
+    assert json.loads(local.read_text())["db"] == str(mock_vault["db"])

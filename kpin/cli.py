@@ -101,6 +101,14 @@ def _setting(key: str) -> str:
     return str(_settings().get(key, DEFAULT_SETTINGS.get(key, "")))
 
 
+def _confirm(prompt: str) -> bool:
+    try:
+        answer = input(prompt)
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
 def _find_local_file() -> Path | None:
     cur = Path.cwd()
     for parent in [cur, *cur.parents]:
@@ -194,6 +202,28 @@ def cmd_init(args) -> int:
         print(f"Vault already exists for '{name}' at {db}", file=sys.stderr)
         return 1
 
+    reg = _registry()
+    if name in reg:
+        existing = reg[name]
+        print(
+            f"Project '{name}' is already registered at {existing.get('db')}",
+            file=sys.stderr,
+        )
+        if not _confirm(
+            f"Reuse that vault for this directory instead of creating a new one? [y/N] "
+        ):
+            print(
+                "Aborted. Use 'kpin init --project <unique-name>' to create a separate vault.",
+                file=sys.stderr,
+            )
+            return 1
+        local = Path.cwd() / LOCAL_FILE
+        if not local.exists():
+            local.write_text(json.dumps(existing, indent=2))
+            print(f"Created {local}")
+        print(f"Linked to existing vault: {existing.get('db')}")
+        return 0
+
     db.parent.mkdir(parents=True, exist_ok=True)
     keyfile.parent.mkdir(parents=True, exist_ok=True)
     keyfile.write_bytes(os.urandom(64))
@@ -205,7 +235,6 @@ def cmd_init(args) -> int:
     kp.add_entry(kp.root_group, data["entry"], username="kpin", password="placeholder")
     kp.save()
 
-    reg = _registry()
     reg[name] = data
     _save_registry(reg)
 
