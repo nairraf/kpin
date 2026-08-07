@@ -9,8 +9,15 @@ description = "Inject secrets from a KeePassXC vault into dev commands, without 
 requires-python = ">=3.9"
 dependencies = ["pykeepass>=4.0"]
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 kpin = "kpin.cli:main"
 
 [tool.setuptools]
 packages = ["kpin"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

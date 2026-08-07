@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """kpin - inject secrets from a KeePassXC vault into dev commands.
 
-Resolves a per-project vault (via a local `.vault` file or a global registry),
+Resolves a per-project vault (via a local `.kpin` file or a global registry),
 then reads/decrypts secrets and injects them into a child process without
 printing values to stdout.
 
@@ -10,7 +10,7 @@ Requires: Python 3.9+, pykeepass, keepassxc-cli (optional, for init).
 Config resolution order:
   1. --config <path>
   2. $KPIN_CONFIG
-  3. `.vault` file found by walking up from CWD
+  3. `.kpin` file found by walking up from CWD
   4. ~/.config/kpin/projects.json keyed by project name
 """
 
@@ -22,14 +22,19 @@ import os
 import subprocess
 import sys
 import tempfile
+from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__
 
-CONFIG_DIR = Path.home() / ".config" / "kpin"
-REGISTRY_FILE = CONFIG_DIR / "projects.json"
-LOCAL_FILE = ".vault"
+LOCAL_FILE = ".kpin"
+
+DEFAULT_SETTINGS = {
+    "vault_dir": "~/.kpin",
+}
+
+SETTING_KEYS = tuple(DEFAULT_SETTINGS)
 
 
 class KpinError(RuntimeError):
@@ -44,18 +49,55 @@ class ProjectConfig:
     entry: str
 
 
+def config_dir() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "kpin"
+
+
+def registry_file() -> Path:
+    return config_dir() / "projects.json"
+
+
+def config_file() -> Path:
+    return config_dir() / "config.json"
+
+
 def _registry() -> dict:
-    if REGISTRY_FILE.exists():
+    path = registry_file()
+    if path.exists():
         try:
-            return json.loads(REGISTRY_FILE.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            raise KpinError(f"Invalid registry JSON: {REGISTRY_FILE}")
+            raise KpinError(f"Invalid registry JSON: {path}")
     return {}
 
 
 def _save_registry(data: dict) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    REGISTRY_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = registry_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _settings() -> dict:
+    path = config_file()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            raise KpinError(f"Invalid settings JSON: {path}")
+        if not isinstance(data, dict):
+            raise KpinError(f"Settings must be a JSON object: {path}")
+        return data
+    return {}
+
+
+def _save_settings(data: dict) -> None:
+    path = config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _setting(key: str) -> str:
+    return str(_settings().get(key, DEFAULT_SETTINGS.get(key, "")))
 
 
 def _find_local_file() -> Path | None:
@@ -88,7 +130,7 @@ def resolve_config(project: str | None, config_path: str | None) -> ProjectConfi
     if project:
         if project in reg:
             return _build(project, reg[project])
-        raise KpinError(f"Project '{project}' not in registry {REGISTRY_FILE}")
+        raise KpinError(f"Project '{project}' not in registry {registry_file()}")
 
     raise KpinError(
         "No vault configured. Run 'kpin init' in this directory or provide --project."
@@ -138,10 +180,11 @@ def _entry(kp, config: ProjectConfig):
 
 def cmd_init(args) -> int:
     name = args.project or Path.cwd().name
+    vault_dir = Path(_setting("vault_dir")).expanduser()
     data = {
         "name": name,
-        "db": str((Path.home() / ".kpin" / f"{name}.kdbx").expanduser()),
-        "keyfile": str((Path.home() / ".kpin" / f"{name}.key").expanduser()),
+        "db": str(vault_dir / f"{name}.kdbx"),
+        "keyfile": str(vault_dir / f"{name}.key"),
         "entry": "default",
     }
     db, keyfile = Path(data["db"]), Path(data["keyfile"])
@@ -159,11 +202,9 @@ def cmd_init(args) -> int:
     kp.add_entry(kp.root_group, data["entry"], username="kpin", password="placeholder")
     kp.save()
 
-    REGISTRY = Path.home() / ".config" / "kpin" / "projects.json"
-    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-    reg = json.loads(REGISTRY.read_text()) if REGISTRY.exists() else {}
+    reg = _registry()
     reg[name] = data
-    REGISTRY.write_text(json.dumps(reg, indent=2))
+    _save_registry(reg)
 
     local = Path.cwd() / LOCAL_FILE
     if not local.exists():
@@ -232,7 +273,8 @@ def cmd_env(args) -> int:
     kp = _open(config)
     entry = _entry(kp, config)
     for prop in entry.custom_properties:
-        print(f"{prop}={entry.get_custom_property(prop)}")
+        value = entry.get_custom_property(prop)
+        print(f"{prop}={value or ''}")
     return 0
 
 
@@ -242,9 +284,10 @@ def cmd_run(args) -> int:
     env = dict(os.environ)
     kp = _open(config)
     entry = _entry(kp, config)
-    for prop in entry.custom_properties:
-        env[prop] = entry.get_custom_property(prop)
     command = _strip_sep(args.cmd)
+    for prop in entry.custom_properties:
+        value = entry.get_custom_property(prop)
+        env[prop] = value or ""
     return subprocess.call(command, env=env)
 
 
@@ -263,7 +306,8 @@ def cmd_materialize(args) -> int:
         env = dict(os.environ)
         env["KPIN_FILE"] = path
         for prop in entry.custom_properties:
-            env[prop] = entry.get_custom_property(prop)
+            value = entry.get_custom_property(prop)
+            env[prop] = value or ""
         command = _strip_sep(args.cmd)
         if not command:
             print(path)
@@ -292,6 +336,41 @@ def cmd_validate(args) -> int:
     return 1 if missing else 0
 
 
+def cmd_config(args) -> int:
+    if args.unset:
+        data = _settings()
+        if args.unset in data:
+            del data[args.unset]
+            _save_settings(data)
+            print(f"Unset {args.unset}")
+        else:
+            print(f"Setting '{args.unset}' is not set", file=sys.stderr)
+            return 1
+        return 0
+    if args.show or (args.key == "show" and args.value is None):
+        data = dict(DEFAULT_SETTINGS)
+        data.update(_settings())
+        for key in SETTING_KEYS:
+            print(f"{key}={data[key]}")
+        return 0
+    if not args.key:
+        return cmd_config(Namespace(show=True, unset=None, key=None, value=None))
+    if args.key not in SETTING_KEYS:
+        print(
+            f"Unknown setting '{args.key}'. Known: {', '.join(SETTING_KEYS)}",
+            file=sys.stderr,
+        )
+        return 1
+    if args.value:
+        data = _settings()
+        data[args.key] = args.value
+        _save_settings(data)
+        print(f"{args.key}={args.value}")
+        return 0
+    print(_setting(args.key))
+    return 0
+
+
 def cmd_status(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -309,10 +388,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_common(p):
         p.add_argument("--project", help="project name (registry lookup)")
-        p.add_argument("--config", help="path to a .vault config file")
+        p.add_argument("--config", help="path to a .kpin config file")
 
     p = sub.add_parser("init", help="create a new project vault")
     add_common(p)
+
+    p = sub.add_parser("config", help="get/set/show global settings (git-config style)")
+    p.add_argument("key", nargs="?")
+    p.add_argument("value", nargs="?")
+    p.add_argument("--unset", metavar="KEY", help="remove a setting")
+    p.add_argument("--show", action="store_true", help="show all settings")
 
     p = sub.add_parser("status", help="show active vault")
     add_common(p)
@@ -349,10 +434,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def dispatch(args) -> int:
     handlers = {
         "init": cmd_init,
+        "config": cmd_config,
         "status": cmd_status,
         "set": cmd_set,
         "attach": cmd_attach,
@@ -362,8 +447,13 @@ def main() -> None:
         "materialize": cmd_materialize,
         "validate": cmd_validate,
     }
+    return handlers[args.command](args)
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     try:
-        rc = handlers[args.command](args)
+        rc = dispatch(args)
     except KpinError as exc:
         print(f"kpin: {exc}", file=sys.stderr)
         rc = 1

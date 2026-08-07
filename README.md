@@ -28,7 +28,7 @@ Requires a KeePassXC-compatible KDBX vault. Install KeePassXC (optional, for `kp
 
 ```bash
 cd my-project
-kpin init                # creates ~/.kpin/<project>.kdbx + keyfile + local .vault
+kpin init                # creates ~/.kpin/<project>.kdbx + keyfile + local .kpin
 kpin set API_KEY --stdin # or: kpin set API_KEY 'value'
 kpin run -- node app.js  # injects API_KEY into the child env only
 
@@ -41,7 +41,7 @@ kpin materialize -- gradlew assembleDebug   # writes temp file, sets $KPIN_FILE,
 
 | Command | Description |
 |---|---|
-| `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.vault` |
+| `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.kpin` |
 | `kpin status` | Show the active vault |
 | `kpin set KEY [VALUE]` / `--stdin` | Set a secret on the entry |
 | `kpin attach FILE` | Attach a binary file to the entry |
@@ -57,10 +57,10 @@ kpin materialize -- gradlew assembleDebug   # writes temp file, sets $KPIN_FILE,
 
 1. `--config <path>` flag
 2. `$KPIN_CONFIG` env var
-3. `.vault` file found by walking up from the current directory
+3. `.kpin` file found by walking up from the current directory
 4. `~/.config/kpin/projects.json` keyed by project name (`--project NAME`)
 
-The `.vault` file is a machine-local pointer (paths only, no secrets) and should be gitignored:
+The `.kpin` file is a machine-local pointer (paths only, no secrets) and should be gitignored:
 
 ```json
 {

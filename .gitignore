@@ -4,7 +4,7 @@
 *.keyx
 
 # Local pointer files
-.vault
+.kpin
 
 # Python
 __pycache__/
