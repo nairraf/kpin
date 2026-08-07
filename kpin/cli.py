@@ -32,6 +32,7 @@ LOCAL_FILE = ".kpin"
 
 DEFAULT_SETTINGS = {
     "vault_dir": "~/.kpin",
+    "key_dir": "~/.keys",
 }
 
 SETTING_KEYS = tuple(DEFAULT_SETTINGS)
@@ -181,10 +182,11 @@ def _entry(kp, config: ProjectConfig):
 def cmd_init(args) -> int:
     name = args.project or Path.cwd().name
     vault_dir = Path(_setting("vault_dir")).expanduser()
+    key_dir = Path(_setting("key_dir")).expanduser()
     data = {
         "name": name,
         "db": str(vault_dir / f"{name}.kdbx"),
-        "keyfile": str(vault_dir / f"{name}.key"),
+        "keyfile": str(key_dir / f"{name}.key"),
         "entry": "default",
     }
     db, keyfile = Path(data["db"]), Path(data["keyfile"])
@@ -192,6 +194,7 @@ def cmd_init(args) -> int:
         print(f"Vault already exists for '{name}' at {db}", file=sys.stderr)
         return 1
 
+    db.parent.mkdir(parents=True, exist_ok=True)
     keyfile.parent.mkdir(parents=True, exist_ok=True)
     keyfile.write_bytes(os.urandom(64))
     keyfile.chmod(0o600)

@@ -11,6 +11,7 @@ def test_config_show_defaults(isolated_env):
     r = run_cli(["config", "show"])
     assert r["rc"] == 0
     assert "vault_dir=~/.kpin" in r["out"]
+    assert "key_dir=~/.keys" in r["out"]
 
 
 def test_config_set(isolated_env, mock_vault):
@@ -53,3 +54,4 @@ def test_config_bare_is_show(isolated_env):
     r = run_cli(["config"])
     assert r["rc"] == 0
     assert "vault_dir=~/.kpin" in r["out"]
+    assert "key_dir=~/.keys" in r["out"]

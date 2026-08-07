@@ -6,7 +6,10 @@ from tests.helpers import run_cli
 def test_init_creates_vault_in_config_vault_dir(isolated_env, mock_vault, monkeypatch):
     monkeypatch.setenv("KPIN_CONFIG", "")
     vault_dir = mock_vault["home"] / "myvaults"
+    key_dir = mock_vault["home"] / "mykeys"
     r = run_cli(["config", "vault_dir", str(vault_dir)])
+    assert r["rc"] == 0
+    r = run_cli(["config", "key_dir", str(key_dir)])
     assert r["rc"] == 0
 
     proj = mock_vault["home"] / "proj"
@@ -14,16 +17,19 @@ def test_init_creates_vault_in_config_vault_dir(isolated_env, mock_vault, monkey
     r2 = run_cli(["init", "--project", "p1"], cwd=str(proj))
     assert r2["rc"] == 0
     assert (vault_dir / "p1.kdbx").exists()
-    assert (vault_dir / "p1.key").exists()
-    assert (vault_dir / "p1.key").stat().st_mode & 0o777 == 0o600
+    assert (key_dir / "p1.key").exists()
+    assert (key_dir / "p1.key").stat().st_mode & 0o777 == 0o600
+    assert not (vault_dir / "p1.key").exists()
 
     reg = json.loads((mock_vault["config_dir"] / "projects.json").read_text())
     assert "p1" in reg
     assert reg["p1"]["db"] == str(vault_dir / "p1.kdbx")
+    assert reg["p1"]["keyfile"] == str(key_dir / "p1.key")
 
     local = proj / ".kpin"
     assert local.exists()
     assert json.loads(local.read_text())["db"] == str(vault_dir / "p1.kdbx")
+    assert json.loads(local.read_text())["keyfile"] == str(key_dir / "p1.key")
 
 
 def test_init_refuses_existing_vault(isolated_env, mock_vault, monkeypatch):

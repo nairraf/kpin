@@ -28,7 +28,7 @@ Requires a KeePassXC-compatible KDBX vault. Install KeePassXC (optional, for `kp
 
 ```bash
 cd my-project
-kpin init                # creates ~/.kpin/<project>.kdbx + keyfile + local .kpin
+kpin init                # creates ~/.kpin/<project>.kdbx + ~/.keys/<project>.key + local .kpin
 kpin set API_KEY --stdin # or: kpin set API_KEY 'value'
 kpin run -- node app.js  # injects API_KEY into the child env only
 
@@ -66,16 +66,29 @@ The `.kpin` file is a machine-local pointer (paths only, no secrets) and should 
 {
   "name": "my-project",
   "db": "~/.kpin/my-project.kdbx",
-  "keyfile": "~/.kpin/my-project.key",
+  "keyfile": "~/.keys/my-project.key",
   "entry": "default"
 }
 ```
 
 Use `--project NAME` from anywhere (falls back to the registry).
 
+## Global settings
+
+`kpin config` manages settings in `~/.config/kpin/config.json` (git-config style):
+
+```bash
+kpin config vault_dir ~/.kpin   # where vaults (.kdbx) live
+kpin config key_dir ~/.keys     # where keyfiles (.key) live — keep separate from vaults
+kpin config show                # show all settings
+kpin config --unset key_dir     # remove a setting (falls back to default)
+```
+
+Vaults and keyfiles are kept in separate directories by default so a synced vault directory never carries the keyfiles that unlock it.
+
 ## Security notes
 
-- Keyfile-only vaults: the keyfile **is** the secret. Never sync `~/.kpin/*.key` to the cloud.
+- Keyfile-only vaults: the keyfile **is** the secret. Never sync `~/.keys/*.key` to the cloud.
 - `kpin get`/`kpin env` print values to stdout — intended for humans or explicit piping, not agents.
 - `kpin run` prints nothing about the secrets; the child inherits them in env only.
 - `kpin materialize` cleans up the temp file in a `finally` block.
