@@ -1,3 +1,10 @@
+# Agent-scoped files (memory system + future skills/config) — live in ~/ai.
+# Symlinks into ~/ai: the "agents" pattern has no trailing slash (git treats
+# a symlink as a file, not a dir), and AGENTS.md must never be committed (it
+# would publish the private ~/ai path).
+agents
+AGENTS.md
+
 # Vaults are machine-local — never commit keyfiles or DBs
 *.kdbx
 *.key
