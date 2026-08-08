@@ -1,7 +1,4 @@
-# Agent-scoped files (memory system + future skills/config) — live in ~/ai.
-# Symlinks into ~/ai: the "agents" pattern has no trailing slash (git treats
-# a symlink as a file, not a dir), and AGENTS.md must never be committed (it
-# would publish the private ~/ai path).
+# Agent files (memory system, skills, config) — never commit
 agents
 AGENTS.md
 
