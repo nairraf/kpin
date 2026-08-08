@@ -89,7 +89,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin get attribute KEY [--entry NAME]` | Reveal an attribute value |
 | `kpin get attachment --name FILE [--output DIR\|PATH]` | Extract an attachment to a dir (keeps stored name) or exact path |
 | `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
-| `kpin run [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`) |
+| `kpin run [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--password` also injects the entry password as `$KPIN_PASSWORD` |
 | `kpin validate [KEY...] [--entry NAME]` | Check required attributes are present |
 
 ## Config resolution
@@ -135,6 +135,7 @@ Vaults and keyfiles are kept in separate directories by default so a synced vaul
 - `kpin run --name FILE` cleans up the temp file after the child exits (unless `--keep`).
 - Extracted attachments (`--output`) are written with `0600` permissions (owner-only).
 - `kpin get attachment` without `--output` refuses to write binary to an interactive terminal — pipe it or use `--output`.
+- `kpin run --password` injects the entry password as `$KPIN_PASSWORD` — opt-in only; it exposes the password to the child process, so use it knowingly.
 
 ## License
 

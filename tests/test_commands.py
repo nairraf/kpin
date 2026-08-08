@@ -333,3 +333,40 @@ def test_set_attachment_to_specific_entry(isolated_env, mock_vault):
     )
     assert r2["rc"] == 0
     assert open(outfile, "rb").read() == payload
+
+
+def test_run_password_opt_in(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "pw.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--password",
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write(os.environ.get('KPIN_PASSWORD', 'UNSET'))",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "placeholder"
+
+
+def test_run_password_not_injected_by_default(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "pw.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write(os.environ.get('KPIN_PASSWORD', 'UNSET'))",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "UNSET"

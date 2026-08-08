@@ -389,6 +389,8 @@ def cmd_run(args) -> int:
     for prop in entry.custom_properties:
         value = entry.get_custom_property(prop)
         env[prop] = value or ""
+    if args.password:
+        env["KPIN_PASSWORD"] = entry.password or ""
 
     if args.name:
         attachment = _attachment(config, args.name, args.entry)
@@ -617,6 +619,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="write the materialized attachment here (dir keeps stored name, or exact path)",
     )
     p.add_argument("--keep", action="store_true", help="keep the materialized file")
+    p.add_argument(
+        "--password",
+        action="store_true",
+        help="also inject the entry password as $KPIN_PASSWORD (opt-in; leaks it into the child env)",
+    )
     p.add_argument("cmd", nargs=argparse.REMAINDER)
 
     p = sub.add_parser("validate", help="check required secrets are present")
