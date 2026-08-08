@@ -38,6 +38,8 @@ def mock_vault(tmp_path):
     }
     att_name = "mock.json"
     att_bytes = b'{"client": "mock"}'
+    att_name2 = "mock.pem"
+    att_bytes2 = b"-----BEGIN CERT-----\nMOCK\n-----END CERT-----\n"
 
     (vault_dir / "test.key").write_bytes(os.urandom(64))
     (vault_dir / "test.key").chmod(0o600)
@@ -51,6 +53,8 @@ def mock_vault(tmp_path):
     e2.set_custom_property("MOCK_OTHER", "OTHER_VAL")
     bin_id = kp.add_binary(att_bytes)
     e1.add_attachment(bin_id, att_name)
+    bin_id2 = kp.add_binary(att_bytes2)
+    e1.add_attachment(bin_id2, att_name2)
     kp.save()
 
     return {
@@ -64,6 +68,8 @@ def mock_vault(tmp_path):
         "props": props,
         "att_name": att_name,
         "att_bytes": att_bytes,
+        "att_name2": att_name2,
+        "att_bytes2": att_bytes2,
         "db": vault_dir / "test.kdbx",
         "keyfile": vault_dir / "test.key",
     }

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -434,6 +435,37 @@ def _clean_env(config: ProjectConfig) -> dict[str, str]:
     return env
 
 
+def _parse_attach(spec: str) -> tuple[str, str]:
+    """Parse an --attach NAME:VAR spec.
+
+    Returns (name, var). Raises KpinError with a clear message on bad input.
+    """
+    if ":" not in spec:
+        raise KpinError(
+            f"Invalid --attach '{spec}': expected NAME:VAR "
+            "(attachment filename, colon, env var name)"
+        )
+    name, _, rest = spec.partition(":")
+    if ":" in rest:
+        raise KpinError(f"Invalid --attach '{spec}': too many ':' (expected NAME:VAR)")
+    if not name:
+        raise KpinError(f"Invalid --attach '{spec}': missing attachment name")
+    if not rest:
+        raise KpinError(f"Invalid --attach '{spec}': missing env var name")
+    if not re.match(r"[A-Za-z_][A-Za-z0-9_]*$", rest):
+        raise KpinError(
+            f"Invalid --attach '{spec}': '{rest}' is not a valid env var name"
+        )
+    return name, rest
+
+
+def _materialize(attachment) -> str:
+    """Write an attachment to a 0600 temp file, returning its path."""
+    with tempfile.NamedTemporaryFile(delete=False, prefix="kpin-") as fh:
+        fh.write(attachment.binary)
+        return fh.name
+
+
 def cmd_run(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -444,6 +476,25 @@ def cmd_run(args) -> int:
         print("Missing command to run", file=sys.stderr)
         return 1
 
+    if args.attach and args.output:
+        print(
+            "--output is not compatible with --attach "
+            "(a single --output can't address multiple files); use --keep to persist temp files",
+            file=sys.stderr,
+        )
+        return 1
+
+    attaches = [_parse_attach(spec) for spec in args.attach or []]
+    vars_seen: set[str] = set()
+    if args.name:
+        vars_seen.add("KPIN_FILE")
+    for name, var in attaches:
+        if var in vars_seen:
+            raise KpinError(
+                f"Duplicate env var '{var}' in --attach (would silently overwrite)"
+            )
+        vars_seen.add(var)
+
     env = _clean_env(config) if args.clean_env else dict(os.environ)
     for prop in entry.custom_properties:
         value = entry.get_custom_property(prop)
@@ -451,25 +502,33 @@ def cmd_run(args) -> int:
     if args.password:
         env["KPIN_PASSWORD"] = entry.password or ""
 
-    if args.name:
-        attachment = _attachment(config, args.name, args.entry)
-        if args.output:
-            out = _output_path(args.output, attachment.filename)
-            out.write_bytes(attachment.binary)
-            out.chmod(0o600)
-            path = str(out)
-        else:
-            with tempfile.NamedTemporaryFile(delete=False, prefix="kpin-") as fh:
-                fh.write(attachment.binary)
-                path = fh.name
-        env["KPIN_FILE"] = path
-        try:
-            return subprocess.call(command, env=env)
-        finally:
-            if not args.keep:
-                os.unlink(path)
+    temp_paths: list[str] = []
+    try:
+        if args.name:
+            attachment = _attachment(config, args.name, args.entry)
+            if args.output:
+                out = _output_path(args.output, attachment.filename)
+                out.write_bytes(attachment.binary)
+                out.chmod(0o600)
+                path = str(out)
+            else:
+                path = _materialize(attachment)
+                temp_paths.append(path)
+            env["KPIN_FILE"] = path
+        for name, var in attaches:
+            attachment = _attachment(config, name, args.entry)
+            path = _materialize(attachment)
+            temp_paths.append(path)
+            env[var] = path
 
-    return subprocess.call(command, env=env)
+        return subprocess.call(command, env=env)
+    finally:
+        if not args.keep:
+            for path in temp_paths:
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
 
 
 def _strip_sep(command: list[str]) -> list[str]:
@@ -774,6 +833,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--name",
         help="also materialize this attachment as $KPIN_FILE (exact stored filename)",
+    )
+    p.add_argument(
+        "--attach",
+        action="append",
+        metavar="NAME:VAR",
+        help="materialize attachment NAME and expose its path as $VAR (repeatable)",
     )
     p.add_argument(
         "--output",

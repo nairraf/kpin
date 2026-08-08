@@ -334,3 +334,161 @@ def test_run_clean_env_all_sources_union(isolated_env, mock_vault, monkeypatch):
     )
     assert r["rc"] == 0
     assert open(outfile).read() == "1|1|1"
+
+
+def test_run_attach_multi_materializes_and_cleans_up(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "attach.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--attach",
+            f"{mock_vault['att_name']}:KPIN_JSON",
+            "--attach",
+            f"{mock_vault['att_name2']}:KPIN_PEM",
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; "
+            f"open({outfile!r}+'.j','wb').write(open(os.environ['KPIN_JSON'],'rb').read()); "
+            f"open({outfile!r}+'.p','wb').write(open(os.environ['KPIN_PEM'],'rb').read()); "
+            f"open({outfile!r}+'.ex','w').write('1' if os.path.exists(os.environ['KPIN_JSON']) else '0')",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile + ".j", "rb").read() == mock_vault["att_bytes"]
+    assert open(outfile + ".p", "rb").read() == mock_vault["att_bytes2"]
+    assert open(outfile + ".ex").read() == "1"
+    assert not list(Path(tempfile.gettempdir()).glob("kpin-*"))
+
+
+def test_run_attach_with_name_both_set(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "attach_name.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--name",
+            mock_vault["att_name"],
+            "--attach",
+            f"{mock_vault['att_name2']}:KPIN_PEM",
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write('|'.join(["
+            f"'1' if os.environ.get('KPIN_FILE') else '0',"
+            f"'1' if os.environ.get('KPIN_PEM') else '0']))",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1"
+    assert not list(Path(tempfile.gettempdir()).glob("kpin-*"))
+
+
+def test_run_attach_keep_persists_temp_files(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "attach_keep.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--attach",
+            f"{mock_vault['att_name']}:KPIN_JSON",
+            "--keep",
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write(os.environ['KPIN_JSON'])",
+        ]
+    )
+    assert r["rc"] == 0
+    kept = open(outfile).read().strip()
+    assert kept.startswith("/tmp/kpin-")
+    assert Path(kept).exists()
+    assert Path(kept).read_bytes() == mock_vault["att_bytes"]
+    os.unlink(kept)
+
+
+def test_run_attach_invalid_specs(isolated_env, mock_vault, monkeypatch):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    bad_specs = [
+        "no-colon",
+        "a:b:c",
+        ":VAR",
+        "name:",
+        "name:1BAD",
+    ]
+    for spec in bad_specs:
+        r = run_cli(["run", "--config", cfg, "--attach", spec, "--", "echo", "hi"])
+        assert r["rc"] == 1, spec
+        assert "--attach" in r["err"], spec
+
+
+def test_run_attach_duplicate_var_rejected(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--attach",
+            f"{mock_vault['att_name']}:KPIN_X",
+            "--attach",
+            f"{mock_vault['att_name2']}:KPIN_X",
+            "--",
+            "echo",
+            "hi",
+        ]
+    )
+    assert r["rc"] == 1
+    assert "Duplicate env var" in r["err"]
+
+
+def test_run_attach_with_output_rejected(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--attach",
+            f"{mock_vault['att_name']}:KPIN_JSON",
+            "--output",
+            str(mock_vault["home"] / "out"),
+            "--",
+            "echo",
+            "hi",
+        ]
+    )
+    assert r["rc"] == 1
+    assert "--output" in r["err"]
+
+
+def test_run_attach_composes_with_clean_env(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("PARENT_LEAK", "leaky")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "attach_clean.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--clean-env",
+            "--attach",
+            f"{mock_vault['att_name']}:KPIN_JSON",
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write('|'.join(["
+            f"'1' if os.environ.get('PARENT_LEAK') is None else '0',"
+            f"'1' if os.environ.get('KPIN_JSON') else '0',"
+            f"'1' if os.environ.get('MOCK_SECRET') == 'MOCK_VAL' else '0']))",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1"

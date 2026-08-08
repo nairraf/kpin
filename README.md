@@ -108,6 +108,17 @@ kpin run --name server.pem --entry "AI Providers" -- ./start.sh   # temp file as
 
 `kpin run --name FILE` materializes the attachment to a temp file, sets `$KPIN_FILE` in the child env, and deletes the file when the child exits (unless `--keep`). Extracted files are written owner-only (`0600`).
 
+**Several files at once** — Android/Flutter builds typically need a keystore plus a couple of config files. Use repeatable `--attach NAME:VAR` to expose each file's path under an explicit variable:
+
+```bash
+kpin run \
+  --attach keystore.jks:KPIN_KEYSTORE \
+  --attach google-services.json:KPIN_GS \
+  -- ./gradlew assembleDebug
+```
+
+Each attachment is materialized to its own temp file (`0600`) and its path is set as the named var; all are deleted when the child exits (unless `--keep`). `--output` is not compatible with `--attach` (one path can't address multiple files); `--name FILE` still works alongside for the single `$KPIN_FILE` case.
+
 ## Commands
 
 Every secret access is explicit about **type**, **entry**, and (for attachments) **which file + where it lands**. `--entry NAME` selects an entry by title; omitted → the default entry.
@@ -128,7 +139,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin get attribute KEY [--entry NAME]` | Reveal an attribute value |
 | `kpin get attachment --name FILE [--output DIR\|PATH]` | Extract an attachment to a dir (keeps stored name) or exact path |
 | `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
-| `kpin run [--clean-env] [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--password` also injects the entry password as `$KPIN_PASSWORD`; `--clean-env` starts the child from a minimal env instead of inheriting |
+| `kpin run [--clean-env] [--entry NAME] [--name FILE] [--attach NAME:VAR] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--attach NAME:VAR` (repeatable) materializes each attachment and exposes its path as `$VAR`; `--password` also injects the entry password as `$KPIN_PASSWORD`; `--clean-env` starts the child from a minimal env instead of inheriting |
 | `kpin validate [KEY...] [--entry NAME]` | Check required attributes are present |
 
 ## Config resolution
