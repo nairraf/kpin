@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -94,3 +95,242 @@ def test_run_propagates_child_exit_code(isolated_env, mock_vault):
         ["run", "--config", cfg, "--", sys.executable, "-c", "import sys; sys.exit(7)"]
     )
     assert r["rc"] == 7
+
+
+def _probe_env(cfg, outfile, checks, clean=False):
+    expr = ", ".join(checks)
+    args = ["run", "--config", cfg]
+    if clean:
+        args.append("--clean-env")
+    args += [
+        "--",
+        sys.executable,
+        "-c",
+        f"import os; open({outfile!r},'w').write('|'.join([{expr}]))",
+    ]
+    return run_cli(args)
+
+
+def _env_check(name, expected):
+    return f"'1' if os.environ.get({name!r}) == {expected!r} else '0'"
+
+
+def _env_absent(name):
+    return f"'1' if os.environ.get({name!r}) is None else '0'"
+
+
+def _env_present(name):
+    return f"'1' if os.environ.get({name!r}) else '0'"
+
+
+def test_run_clean_env_drops_parent_vars(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("PARENT_LEAK", "leaky")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "clean1.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [
+            _env_absent("PARENT_LEAK"),
+            _env_check("MOCK_SECRET", "MOCK_VAL"),
+            _env_present("PATH"),
+            _env_present("HOME"),
+        ],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1|1"
+
+
+def test_run_clean_env_injects_secrets(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "clean2.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [
+            _env_check("MOCK_SECRET", "MOCK_VAL"),
+            _env_check("MOCK_TOKEN", "tok-12345"),
+            _env_check("MOCK_EMPTY", ""),
+        ],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1"
+
+
+def test_run_clean_env_keeps_path_and_home(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "clean3.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [_env_present("PATH"), _env_present("HOME")],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1"
+
+
+def test_run_default_inherits_parent_vars(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("PARENT_LEAK", "leaky")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "inherit.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [_env_check("PARENT_LEAK", "leaky")],
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1"
+
+
+def test_run_clean_env_composes_with_password_and_name(
+    isolated_env, mock_vault, monkeypatch
+):
+    monkeypatch.setenv("PARENT_LEAK", "leaky")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "compose.out")
+    r = run_cli(
+        [
+            "run",
+            "--config",
+            cfg,
+            "--clean-env",
+            "--password",
+            "--name",
+            mock_vault["att_name"],
+            "--",
+            sys.executable,
+            "-c",
+            f"import os; open({outfile!r},'w').write('|'.join(["
+            + _env_absent("PARENT_LEAK")
+            + ","
+            + _env_check("KPIN_PASSWORD", "placeholder")
+            + ","
+            + _env_present("KPIN_FILE")
+            + ","
+            + _env_check("MOCK_SECRET", "MOCK_VAL")
+            + "]))",
+        ]
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1|1"
+
+
+def test_run_clean_env_keeps_toolchain_vars(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("ANDROID_HOME", "/opt/android-sdk")
+    monkeypatch.setenv("JAVA_HOME", "/usr/lib/jvm/java-17")
+    monkeypatch.setenv("GRADLE_USER_HOME", "/tmp/gradle-home")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "toolchain.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [
+            _env_check("ANDROID_HOME", "/opt/android-sdk"),
+            _env_check("JAVA_HOME", "/usr/lib/jvm/java-17"),
+            _env_check("GRADLE_USER_HOME", "/tmp/gradle-home"),
+        ],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1"
+
+
+def test_run_clean_env_global_extra(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("MY_GLOBAL_VAR", "gval")
+    run_cli(["config", "clean_env_extra", "MY_GLOBAL_VAR"])
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "gextra.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [_env_check("MY_GLOBAL_VAR", "gval")],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1"
+
+
+def test_run_clean_env_project_extra(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("MY_PROJECT_VAR", "pval")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    data = json.loads(open(cfg).read())
+    data["clean_env_extra"] = ["MY_PROJECT_VAR"]
+    open(cfg, "w").write(json.dumps(data))
+    outfile = str(mock_vault["home"] / "pextra.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [_env_check("MY_PROJECT_VAR", "pval")],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1"
+
+
+def test_run_clean_env_global_and_project_extra_union(
+    isolated_env, mock_vault, monkeypatch
+):
+    monkeypatch.setenv("GLOBAL_ONLY", "g")
+    monkeypatch.setenv("PROJECT_ONLY", "p")
+    monkeypatch.setenv("BOTH", "b")
+    run_cli(["config", "clean_env_extra", "GLOBAL_ONLY,BOTH"])
+    cfg = str(mock_vault["home"] / "cfg.json")
+    data = json.loads(open(cfg).read())
+    data["clean_env_extra"] = ["PROJECT_ONLY", "BOTH"]
+    open(cfg, "w").write(json.dumps(data))
+    outfile = str(mock_vault["home"] / "union.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [
+            _env_check("GLOBAL_ONLY", "g"),
+            _env_check("PROJECT_ONLY", "p"),
+            _env_check("BOTH", "b"),
+        ],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1"
+
+
+def test_run_clean_env_env_override(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("MY_ENV_VAR", "eval")
+    monkeypatch.setenv("KPIN_CLEAN_ENV_EXTRA", "MY_ENV_VAR")
+    cfg = str(mock_vault["home"] / "cfg.json")
+    outfile = str(mock_vault["home"] / "envoverride.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [_env_check("MY_ENV_VAR", "eval")],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1"
+
+
+def test_run_clean_env_all_sources_union(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("GLOBAL_VAR", "g")
+    monkeypatch.setenv("PROJECT_VAR", "p")
+    monkeypatch.setenv("ENV_VAR", "e")
+    monkeypatch.setenv("KPIN_CLEAN_ENV_EXTRA", "ENV_VAR")
+    run_cli(["config", "clean_env_extra", "GLOBAL_VAR"])
+    cfg = str(mock_vault["home"] / "cfg.json")
+    data = json.loads(open(cfg).read())
+    data["clean_env_extra"] = ["PROJECT_VAR"]
+    open(cfg, "w").write(json.dumps(data))
+    outfile = str(mock_vault["home"] / "allsources.out")
+    r = _probe_env(
+        cfg,
+        outfile,
+        [
+            _env_check("GLOBAL_VAR", "g"),
+            _env_check("PROJECT_VAR", "p"),
+            _env_check("ENV_VAR", "e"),
+        ],
+        clean=True,
+    )
+    assert r["rc"] == 0
+    assert open(outfile).read() == "1|1|1"

@@ -33,9 +33,27 @@ LOCAL_FILE = ".kpin"
 DEFAULT_SETTINGS = {
     "vault_dir": "~/.kpin",
     "key_dir": "~/.keys",
+    "clean_env_extra": "",
 }
 
-SETTING_KEYS = tuple(DEFAULT_SETTINGS)
+SETTING_KEYS = tuple(DEFAULT_SETTINGS) + ("clean_env_extra",)
+
+# `run --clean-env` allowlist. Core vars every child needs; toolchain vars
+# are kept if set so Android/Flutter/Java builds work out of the box.
+CLEAN_ENV_CORE = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM")
+CLEAN_ENV_TOOLCHAIN = (
+    "ANDROID_HOME",
+    "ANDROID_SDK_ROOT",
+    "ANDROID_USER_HOME",
+    "ANDROID_NDK_HOME",
+    "NDK_HOME",
+    "JAVA_HOME",
+    "JAVA_TOOL_OPTIONS",
+    "GRADLE_HOME",
+    "GRADLE_USER_HOME",
+    "PUB_CACHE",
+    "CHROME_EXECUTABLE",
+)
 
 
 class KpinError(RuntimeError):
@@ -48,6 +66,7 @@ class ProjectConfig:
     db: Path
     keyfile: Path
     entry: str
+    clean_env_extra: tuple[str, ...] = ()
 
 
 def config_dir() -> Path:
@@ -150,7 +169,21 @@ def _build(name: str, data: dict) -> ProjectConfig:
     db = Path(data.get("db", "")).expanduser()
     keyfile = Path(data.get("keyfile", "")).expanduser()
     entry = data.get("entry", "default")
-    return ProjectConfig(name=name, db=db, keyfile=keyfile, entry=entry)
+    extra = _parse_extra(data.get("clean_env_extra"))
+    return ProjectConfig(
+        name=name, db=db, keyfile=keyfile, entry=entry, clean_env_extra=extra
+    )
+
+
+def _parse_extra(value) -> tuple[str, ...]:
+    """Normalize a clean_env_extra value (list or comma-separated string)."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(v.strip() for v in value.split(",") if v.strip())
+    if isinstance(value, (list, tuple)):
+        return tuple(str(v).strip() for v in value if str(v).strip())
+    raise KpinError("clean_env_extra must be a list or comma-separated string")
 
 
 def _require(config: ProjectConfig) -> None:
@@ -376,6 +409,31 @@ def cmd_env(args) -> int:
     return 0
 
 
+def _clean_env(config: ProjectConfig) -> dict[str, str]:
+    """Minimal child env for `run --clean-env`.
+
+    Copies a fixed allowlist (core + toolchain vars) plus any user-configured
+    extras (global `clean_env_extra` setting + per-project `clean_env_extra`),
+    and drops everything else so nothing from the parent leaks into the child.
+    """
+    env: dict[str, str] = {}
+    global_extra = _parse_extra(_settings().get("clean_env_extra"))
+    env_extra = _parse_extra(os.environ.get("KPIN_CLEAN_ENV_EXTRA"))
+    keys = (
+        CLEAN_ENV_CORE
+        + CLEAN_ENV_TOOLCHAIN
+        + global_extra
+        + config.clean_env_extra
+        + env_extra
+    )
+    for key in keys:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    if "PATH" not in env:
+        env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
+    return env
+
+
 def cmd_run(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -386,7 +444,7 @@ def cmd_run(args) -> int:
         print("Missing command to run", file=sys.stderr)
         return 1
 
-    env = dict(os.environ)
+    env = _clean_env(config) if args.clean_env else dict(os.environ)
     for prop in entry.custom_properties:
         value = entry.get_custom_property(prop)
         env[prop] = value or ""
@@ -478,7 +536,74 @@ def cmd_entry(args) -> int:
     return 1
 
 
+def _local_config_path() -> Path:
+    local = _find_local_file()
+    if local is None:
+        raise KpinError(
+            "No .kpin found in this directory tree. Run 'kpin init' here or use --config PATH."
+        )
+    return local
+
+
+def _read_local_config(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise KpinError(f"Invalid .kpin JSON: {path}")
+    if not isinstance(data, dict):
+        raise KpinError(f".kpin must be a JSON object: {path}")
+    return data
+
+
+def _write_local_config(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def cmd_config(args) -> int:
+    local = args.local or bool(args.config)
+    if local:
+        path = Path(args.config).expanduser() if args.config else _local_config_path()
+        if args.config and not path.is_file():
+            raise KpinError(f"Config file not found: {path}")
+        data = _read_local_config(path)
+        if args.unset:
+            if args.unset in data:
+                del data[args.unset]
+                _write_local_config(path, data)
+                print(f"Unset {args.unset}")
+            else:
+                print(f"Setting '{args.unset}' is not set", file=sys.stderr)
+                return 1
+            return 0
+        if args.show or (args.key == "show" and args.value is None):
+            value = data.get("clean_env_extra", "")
+            print(f"clean_env_extra={','.join(_parse_extra(value))}")
+            return 0
+        if not args.key:
+            return cmd_config(
+                Namespace(
+                    show=True,
+                    unset=None,
+                    key=None,
+                    value=None,
+                    local=args.local,
+                    config=args.config,
+                )
+            )
+        if args.key != "clean_env_extra":
+            print(
+                f"Setting '{args.key}' is global-only; only clean_env_extra is project-scoped",
+                file=sys.stderr,
+            )
+            return 1
+        if args.value:
+            data["clean_env_extra"] = _parse_extra(args.value)
+            _write_local_config(path, data)
+            print(f"{args.key}={args.value}")
+            return 0
+        print(",".join(_parse_extra(data.get("clean_env_extra"))))
+        return 0
+
     if args.unset:
         data = _settings()
         if args.unset in data:
@@ -493,10 +618,22 @@ def cmd_config(args) -> int:
         data = dict(DEFAULT_SETTINGS)
         data.update(_settings())
         for key in SETTING_KEYS:
-            print(f"{key}={data[key]}")
+            value = data[key]
+            if key == "clean_env_extra":
+                value = ",".join(_parse_extra(value))
+            print(f"{key}={value}")
         return 0
     if not args.key:
-        return cmd_config(Namespace(show=True, unset=None, key=None, value=None))
+        return cmd_config(
+            Namespace(
+                show=True,
+                unset=None,
+                key=None,
+                value=None,
+                local=False,
+                config=None,
+            )
+        )
     if args.key not in SETTING_KEYS:
         print(
             f"Unknown setting '{args.key}'. Known: {', '.join(SETTING_KEYS)}",
@@ -505,9 +642,15 @@ def cmd_config(args) -> int:
         return 1
     if args.value:
         data = _settings()
-        data[args.key] = args.value
+        if args.key == "clean_env_extra":
+            data[args.key] = _parse_extra(args.value)
+        else:
+            data[args.key] = args.value
         _save_settings(data)
         print(f"{args.key}={args.value}")
+        return 0
+    if args.key == "clean_env_extra":
+        print(",".join(_parse_extra(_settings().get("clean_env_extra"))))
         return 0
     print(_setting(args.key))
     return 0
@@ -535,11 +678,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init", help="create a new project vault")
     add_common(p)
 
-    p = sub.add_parser("config", help="get/set/show global settings (git-config style)")
+    p = sub.add_parser("config", help="get/set/show settings (git-config style)")
     p.add_argument("key", nargs="?")
     p.add_argument("value", nargs="?")
     p.add_argument("--unset", metavar="KEY", help="remove a setting")
     p.add_argument("--show", action="store_true", help="show all settings")
+    p.add_argument(
+        "--local",
+        action="store_true",
+        help="target the project's .kpin (walked up from CWD) instead of global settings",
+    )
+    p.add_argument(
+        "--config",
+        metavar="PATH",
+        help="target a specific .kpin file (project-scoped settings)",
+    )
 
     p = sub.add_parser("status", help="show active vault")
     add_common(p)
@@ -627,6 +780,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="write the materialized attachment here (dir keeps stored name, or exact path)",
     )
     p.add_argument("--keep", action="store_true", help="keep the materialized file")
+    p.add_argument(
+        "--clean-env",
+        action="store_true",
+        help="start the child from a minimal env (PATH/HOME/locale/TMPDIR/TERM + injected secrets) instead of inheriting the parent",
+    )
     p.add_argument(
         "--password",
         action="store_true",

@@ -115,7 +115,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | Command | Description |
 |---|---|
 | `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.kpin` |
-| `kpin config [KEY [VALUE]]` / `--unset` / `show` | Manage global settings (`vault_dir`, `key_dir`) |
+| `kpin config [KEY [VALUE]]` / `--unset` / `show` / `--local` | Manage settings: global (`vault_dir`, `key_dir`, `clean_env_extra`) or per-project (`--local clean_env_extra`) |
 | `kpin status` | Show the active vault |
 | `kpin entry add TITLE` | Create a new entry |
 | `kpin list entries` | List entry titles |
@@ -128,7 +128,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin get attribute KEY [--entry NAME]` | Reveal an attribute value |
 | `kpin get attachment --name FILE [--output DIR\|PATH]` | Extract an attachment to a dir (keeps stored name) or exact path |
 | `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
-| `kpin run [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--password` also injects the entry password as `$KPIN_PASSWORD` |
+| `kpin run [--clean-env] [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--password` also injects the entry password as `$KPIN_PASSWORD`; `--clean-env` starts the child from a minimal env instead of inheriting |
 | `kpin validate [KEY...] [--entry NAME]` | Check required attributes are present |
 
 ## Config resolution
@@ -153,18 +153,46 @@ The `.kpin` file is a machine-local pointer (paths only, no secrets) and should 
 
 Use `--project NAME` from anywhere (falls back to the registry).
 
-## Global settings
+## Settings
 
-`kpin config` manages settings in `~/.config/kpin/config.json` (git-config style):
+`kpin config` manages settings (git-config style). Most settings are **global** in `~/.config/kpin/config.json`; `clean_env_extra` can also be **per-project** in the local `.kpin`.
 
 ```bash
-kpin config vault_dir ~/.kpin   # where vaults (.kdbx) live
-kpin config key_dir ~/.keys     # where keyfiles (.key) live — keep separate from vaults
-kpin config show                # show all settings
+kpin config vault_dir ~/.kpin   # where vaults (.kdbx) live (global)
+kpin config key_dir ~/.keys     # where keyfiles (.key) live — keep separate from vaults (global)
+kpin config show                # show all global settings
 kpin config --unset key_dir     # remove a setting (falls back to default)
 ```
 
 Vaults and keyfiles are kept in separate directories by default so a synced vault directory never carries the keyfiles that unlock it.
+
+## Clean environments (`run --clean-env`)
+
+By default `kpin run` inherits your shell's environment and layers the vault secrets on top. If the parent environment is dirty — a stale `kpin env` export, a leaked secret, a leftover variable — the child sees it, which silently defeats kpin's isolation promise.
+
+`kpin run --clean-env` starts the child from a **minimal, predictable environment** instead:
+
+- **Always kept:** `PATH`, `HOME`, locale (`LANG`/`LC_ALL`/`LC_CTYPE`), `TMPDIR`, `TERM`.
+- **Toolchain vars kept if set:** `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `ANDROID_USER_HOME`, `ANDROID_NDK_HOME`, `NDK_HOME`, `JAVA_HOME`, `JAVA_TOOL_OPTIONS`, `GRADLE_HOME`, `GRADLE_USER_HOME`, `PUB_CACHE`, `CHROME_EXECUTABLE` — so Android/Flutter/Java builds work out of the box.
+- **Vault secrets** (and `$KPIN_PASSWORD`/`$KPIN_FILE` when requested) are always injected.
+- **Everything else from the parent is dropped.**
+
+### Extending the allowlist
+
+If a build needs a variable that isn't in the list, add it at the scope that fits:
+
+```bash
+# global — applies to every project (good if you mostly do one kind of dev)
+kpin config clean_env_extra "MY_TOOL_VAR,OTHER_VAR"
+
+# per-project — applies only to this project's .kpin (good for multi-language work)
+kpin config --local clean_env_extra "MY_TOOL_VAR,OTHER_VAR"
+
+# per-invocation — one-off, no file changes
+KPIN_CLEAN_ENV_EXTRA=MY_TOOL_VAR kpin run --clean-env -- ./build.sh
+```
+
+The effective allowlist is the union of the built-in list, the global setting, the project's `.kpin`, and the `KPIN_CLEAN_ENV_EXTRA` env var. `--local` targets the `.kpin` walked up from your current directory (run `kpin init` there first); `kpin config --config PATH clean_env_extra ...` targets a specific `.kpin` when you're not in the directory. `vault_dir` and `key_dir` are global-only — they're machine settings, not project settings.
 
 ## Security notes
 
@@ -175,6 +203,7 @@ Vaults and keyfiles are kept in separate directories by default so a synced vaul
 - Extracted attachments (`--output`) are written with `0600` permissions (owner-only).
 - `kpin get attachment` without `--output` refuses to write binary to an interactive terminal — pipe it or use `--output`.
 - `kpin run --password` injects the entry password as `$KPIN_PASSWORD` — opt-in only; it exposes the password to the child process, so use it knowingly.
+- `kpin run --clean-env` drops the parent environment (except the documented allowlist) so a dirty shell can't leak secrets into the child. Every variable you add to `clean_env_extra` is a potential leak surface — keep the list tight.
 
 ## License
 
