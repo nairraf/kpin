@@ -128,6 +128,52 @@ def test_entry_add_duplicate_rejected(isolated_env, mock_vault):
     assert "already exists" in r["err"]
 
 
+def test_list_entries(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(["list", "entries", "--config", cfg])
+    assert r["rc"] == 0
+    titles = r["out"].splitlines()
+    assert mock_vault["entry"] in titles
+    assert mock_vault["other"] in titles
+
+
+def test_list_attributes_default_entry(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(["list", "attributes", "--config", cfg])
+    assert r["rc"] == 0
+    names = r["out"].splitlines()
+    assert "MOCK_SECRET" in names
+    assert "MOCK_TOKEN" in names
+    assert "MOCK_EMPTY" in names
+    assert "MOCK_OTHER" not in names
+    assert "MOCK_VAL" not in r["out"]
+
+
+def test_list_attributes_named_entry(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(["list", "attributes", "--entry", mock_vault["other"], "--config", cfg])
+    assert r["rc"] == 0
+    names = r["out"].splitlines()
+    assert "MOCK_OTHER" in names
+    assert "MOCK_SECRET" not in names
+
+
+def test_list_attachments_default_entry(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(["list", "attachments", "--config", cfg])
+    assert r["rc"] == 0
+    assert mock_vault["att_name"] in r["out"].split()
+
+
+def test_list_attachments_named_entry(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(
+        ["list", "attachments", "--entry", mock_vault["other"], "--config", cfg]
+    )
+    assert r["rc"] == 0
+    assert r["out"].strip() == ""
+
+
 def test_get_attribute_from_named_entry(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
     r = run_cli(

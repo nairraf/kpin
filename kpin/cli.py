@@ -433,6 +433,32 @@ def cmd_validate(args) -> int:
     return 1 if missing else 0
 
 
+def cmd_list(args) -> int:
+    config = resolve_config(args.project, args.config)
+    _require(config)
+    kp = _open(config)
+
+    if args.kind == "entries":
+        for entry in kp.entries:
+            print(entry.title)
+        return 0
+
+    entry = _entry(kp, config, args.entry)
+
+    if args.kind == "attributes":
+        for prop in entry.custom_properties:
+            print(prop)
+        return 0
+
+    if args.kind == "attachments":
+        for attachment in entry.attachments:
+            print(attachment.filename)
+        return 0
+
+    print(f"Unknown list kind: {args.kind}", file=sys.stderr)
+    return 1
+
+
 def cmd_entry(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -533,6 +559,20 @@ def build_parser() -> argparse.ArgumentParser:
     ep = entry_kind.add_parser("list", help="list entry titles")
     add_common(ep)
 
+    p = sub.add_parser("list", help="list entries, attributes, or attachments")
+    list_kind = p.add_subparsers(dest="kind", required=True)
+
+    lp = list_kind.add_parser("entries", help="list entry titles")
+    add_common(lp)
+
+    lp = list_kind.add_parser("attributes", help="list attribute names (no values)")
+    add_common(lp)
+    lp.add_argument("--entry", help="entry title (default: configured entry)")
+
+    lp = list_kind.add_parser("attachments", help="list attachment filenames")
+    add_common(lp)
+    lp.add_argument("--entry", help="entry title (default: configured entry)")
+
     p = sub.add_parser("set", help="set a password, attribute, or attachment")
     set_kind = p.add_subparsers(dest="kind", required=True)
 
@@ -609,6 +649,7 @@ def dispatch(args) -> int:
         "config": cmd_config,
         "status": cmd_status,
         "entry": cmd_entry,
+        "list": cmd_list,
         "set": cmd_set,
         "get": cmd_get,
         "env": cmd_env,
