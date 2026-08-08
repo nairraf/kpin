@@ -13,9 +13,9 @@ Inject secrets from a KeePassXC vault into dev commands — without printing the
 ## Install
 
 ```bash
-git clone https://github.com/YOU/kpin.git ~/development/kpin
-ln -s ~/development/kpin/bin/kpin ~/.local/bin/kpin
-python3 -m pip install --user pykeepass
+git clone https://github.com/nairraf/kpin.git ~/development/kpin
+cd ~/development/kpin
+uv tool install --editable .   # puts `kpin` on PATH
 kpin --version
 ```
 
@@ -24,30 +24,54 @@ Requires a KeePassXC-compatible KDBX vault. Install KeePassXC (optional, for `kp
 - macOS: `brew install --cask keepassxc`
 - Windows: download from https://keepassxc.org
 
-## Quick start
+## Quick start — the easy way
+
+Attributes are stored on the vault's **default entry**, so you usually don't need to think about entries at all:
 
 ```bash
 cd my-project
-kpin init                  # creates vault + keyfile + local .kpin pointer
-kpin entry add "API Keys"  # create a named entry (default entry is 'default')
-kpin set attribute API_KEY --stdin           # or: kpin set attribute API_KEY 'value'
-kpin run -- node app.js    # injects attributes into the child env only
+kpin init                        # creates vault + keyfile + local .kpin pointer
+kpin set attribute API_KEY --stdin   # paste your key (avoids shell history)
+kpin run -- node app.js          # injects API_KEY into the child env only
+```
 
-# Reveal secrets deliberately (human/pipe only — never agent automation)
-kpin get attribute API_KEY                  # default entry
-kpin get password --entry "API Keys"        # a specific entry's password
+That's it. No entry flags needed. To check what you have or reveal a value:
+
+```bash
+kpin env                         # list all attributes as KEY=value
+kpin validate API_KEY DB_URL     # exit 1 if any are missing
+kpin get attribute API_KEY       # reveal one value (human/pipe only)
+```
+
+## Using named entries
+
+Every secret can also target a specific entry. Create one, then reference it with `--entry NAME`; omit `--entry` and it goes to the default entry.
+
+```bash
+kpin entry add "AI Providers"          # create an entry
+kpin set attribute openai_token --stdin --entry "AI Providers"
 kpin get attribute openai_token --entry "AI Providers"
 
-# Binary attachment (e.g. Android keystore, certificate)
-kpin set attachment debug.keystore
-kpin get attachment                 # list attachment names
-kpin get attachment --name debug.keystore --output ./certs   # extract, keep name
-kpin run --name debug.keystore -- gradlew assembleDebug      # temp file, $KPIN_FILE, auto-cleanup
+kpin entry add "API Keys"
+kpin set password --stdin --entry "API Keys"   # set the password field
+kpin get password --entry "API Keys"
+kpin get password                            # no --entry = default entry
+```
+
+## Binary attachments (certificates, keystores, configs)
+
+Attachments are referenced by their exact stored filename:
+
+```bash
+kpin set attachment server.pem --entry "AI Providers"
+kpin get attachment --entry "AI Providers"         # list attachment names
+kpin get attachment --name server.pem --output ./certs   # extract, keeps the name
+kpin run --name server.pem --entry "AI Providers" -- ./start.sh   # temp file as $KPIN_FILE, auto-cleanup
 ```
 
 ## Commands
 
-Every secret access is explicit about **type**, **entry**, and (for attachments) **which file + where it lands**. `--entry NAME` selects an entry by title; omitted → the configured entry (usually `default`).
+Every secret access is explicit about **type**, **entry**, and (for attachments) **which file + where it lands**. `--entry NAME` selects an entry by title; omitted → the default entry.
 
 | Command | Description |
 |---|---|
