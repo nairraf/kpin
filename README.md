@@ -13,7 +13,7 @@ Inject secrets from a KeePassXC vault into dev commands — without printing the
 ## Install
 
 ```bash
-git clone <PUBLIC-URL> ~/development/kpin
+git clone https://github.com/nairraf/kpin.git ~/development/kpin
 cd ~/development/kpin
 uv tool install --editable .   # puts `kpin` on PATH
 kpin --version
