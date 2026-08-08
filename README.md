@@ -141,6 +141,8 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
 | `kpin run [--clean-env] [--entry NAME] [--name FILE] [--attach NAME:VAR] [--output DIR\|PATH] [--keep] [--password] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`); `--attach NAME:VAR` (repeatable) materializes each attachment and exposes its path as `$VAR`; `--password` also injects the entry password as `$KPIN_PASSWORD`; `--clean-env` starts the child from a minimal env instead of inheriting |
 | `kpin validate [KEY...] [--entry NAME]` | Check required attributes are present |
+| `kpin scan audit [--silent]` | Audit vault/keyfile/.kpin/git hygiene for secret sprawl |
+| `kpin scan history [--shell bash\|zsh\|fish]` | Check shell history for leaked secret values (redacted) |
 
 ## Config resolution
 
@@ -204,6 +206,30 @@ KPIN_CLEAN_ENV_EXTRA=MY_TOOL_VAR kpin run --clean-env -- ./build.sh
 ```
 
 The effective allowlist is the union of the built-in list, the global setting, the project's `.kpin`, and the `KPIN_CLEAN_ENV_EXTRA` env var. `--local` targets the `.kpin` walked up from your current directory (run `kpin init` there first); `kpin config --config PATH clean_env_extra ...` targets a specific `.kpin` when you're not in the directory. `vault_dir` and `key_dir` are global-only — they're machine settings, not project settings.
+
+## Auditing for secret sprawl (`kpin scan`)
+
+`kpin scan` finds the mistakes that accumulate despite kpin's guardrails — deterministically, with no content heuristics and no false positives.
+
+**`kpin scan audit`** resolves the vault and checks the setup:
+
+- vault database and keyfile exist
+- keyfile permissions are `600` (POSIX)
+- `.kpin` is gitignored, not committed
+- no `*.kdbx` / `*.key` / `*.keyx` files are tracked in git
+- no `.env`-style files (`.env`, `.env.*`) are tracked in git
+
+Each check prints `OK`/`WARN`/`FAIL`. Git checks are skipped in non-git directories (`SKIP: not a git repo`, hidden with `--silent`). Exit code is `1` if anything `FAIL`s — handy for CI or a pre-commit hook.
+
+**`kpin scan history`** checks your shell history for `kpin set` commands that put the secret value on the command line (the thing `--stdin` exists to avoid), and reports them **redacted** — it never echoes the value:
+
+```bash
+$ kpin scan history
+WARN /home/ian/.bash_history: kpin set attribute API_KEY ***
+WARN /home/ian/.zsh_history: kpin set password ***
+```
+
+Bash, zsh (extended format), and fish histories are checked; `--shell bash|zsh|fish` restricts to one. `kpin set ... --stdin` and all `kpin run` invocations are safe by construction and not flagged. Agent session context is deliberately out of scope — kpin prevents leaks there at the source.
 
 ## Security notes
 

@@ -550,6 +550,178 @@ def cmd_validate(args) -> int:
     return 1 if missing else 0
 
 
+def _is_git_repo(directory: Path) -> bool:
+    r = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=str(directory),
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def _git_ls_files(directory: Path) -> set[str]:
+    r = subprocess.run(
+        ["git", "ls-files"],
+        cwd=str(directory),
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return set()
+    return {line.strip() for line in r.stdout.splitlines()}
+
+
+def _git_ignored(directory: Path, path: Path) -> bool:
+    r = subprocess.run(
+        ["git", "check-ignore", str(path)],
+        cwd=str(directory),
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def cmd_scan(args) -> int:
+    if args.scan_kind == "history":
+        return cmd_scan_history(args)
+    return cmd_scan_audit(args)
+
+
+def cmd_scan_audit(args) -> int:
+    config = resolve_config(args.project, args.config)
+    results: list[tuple[str, str]] = []
+    fail = 0
+
+    if not config.db.is_file():
+        results.append(("FAIL", f"vault database missing: {config.db}"))
+        fail = 1
+    else:
+        results.append(("OK", f"vault database present: {config.db}"))
+
+    if not config.keyfile.is_file():
+        results.append(("FAIL", f"keyfile missing: {config.keyfile}"))
+        fail = 1
+    else:
+        results.append(("OK", f"keyfile present: {config.keyfile}"))
+        if os.name != "nt":
+            mode = config.keyfile.stat().st_mode & 0o777
+            if mode & 0o077:
+                results.append(("WARN", f"keyfile perms {mode:03o} — should be 600"))
+            else:
+                results.append(("OK", f"keyfile perms {mode:03o} (600)"))
+
+    local = _find_local_file()
+    git_root = Path.cwd()
+    if not _is_git_repo(git_root):
+        if not args.silent:
+            results.append(("SKIP", "not a git repo — skipping git checks"))
+    else:
+        tracked = _git_ls_files(git_root)
+        if local and str(local.relative_to(git_root)) in tracked:
+            results.append(("FAIL", f".kpin is tracked in git: {local}"))
+            fail = 1
+        elif local and _git_ignored(git_root, local):
+            results.append(("OK", ".kpin is gitignored"))
+        elif local:
+            results.append(("WARN", ".kpin is neither tracked nor gitignored"))
+
+        leaks = [f for f in tracked if f.endswith((".kdbx", ".key", ".keyx"))]
+        if leaks:
+            for f in leaks:
+                results.append(("FAIL", f"vault/keyfile tracked in git: {f}"))
+            fail = 1
+        else:
+            results.append(("OK", "no vault/keyfile files tracked"))
+
+        env_tracked = [f for f in tracked if f == ".env" or f.startswith(".env.")]
+        if env_tracked:
+            for f in env_tracked:
+                results.append(("FAIL", f".env-style file tracked in git: {f}"))
+            fail = 1
+        else:
+            results.append(("OK", "no .env-style files tracked"))
+
+    for status, message in results:
+        print(f"{status}: {message}")
+    return fail
+
+
+def _history_files(shell: str | None) -> list[tuple[str, Path, str]]:
+    home = Path.home()
+    candidates = {
+        "bash": [("bash", home / ".bash_history", "plain")],
+        "zsh": [("zsh", home / ".zsh_history", "zsh_extended")],
+        "fish": [("fish", home / ".local/share/fish/fish_history", "fish_yaml")],
+    }
+    if shell:
+        return candidates[shell]
+    return [entry for entries in candidates.values() for entry in entries]
+
+
+def _read_history(path: Path, fmt: str) -> list[str]:
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = text.splitlines()
+    if fmt == "zsh_extended":
+        result = []
+        for line in lines:
+            if ";" in line:
+                line = line.split(";", 1)[1]
+            result.append(line)
+        return result
+    if fmt == "fish_yaml":
+        result = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- cmd:"):
+                result.append(stripped[len("- cmd:") :].strip().strip("'").strip('"'))
+        return result
+    return lines
+
+
+def _redact_kpin_history(lines: list[str]) -> tuple[int, list[str]]:
+    import re
+
+    hits = 0
+    reports = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("kpin"):
+            continue
+        if "--stdin" in stripped:
+            continue
+        m = re.match(r"kpin\s+set\s+(attribute|password)\s+(\S+)\s+(.+)", stripped)
+        if not m:
+            m = re.match(r"kpin\s+set\s+(attribute|password)\s+(\S+)=(.+)", stripped)
+        if m:
+            hits += 1
+            kind, key, _value = m.groups()
+            reports.append(f"kpin set {kind} {key} ***")
+    return hits, reports
+
+
+def cmd_scan_history(args) -> int:
+    fail = 0
+    for shell, path, fmt in _history_files(args.shell):
+        lines = _read_history(path, fmt)
+        if not lines:
+            print(f"OK: no history entries in {path}")
+            continue
+        hits, reports = _redact_kpin_history(lines)
+        if hits:
+            fail = 1
+            for report in reports:
+                print(f"WARN {path}: {report}")
+        else:
+            print(f"OK: no leaked kpin secrets in {path}")
+    return fail
+
+
 def cmd_list(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -862,6 +1034,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entry", help="entry title (default: configured entry)")
     p.add_argument("keys", nargs="*")
 
+    p = sub.add_parser(
+        "scan",
+        help="audit the vault setup and shell history for secret sprawl",
+    )
+    scan_sub = p.add_subparsers(dest="scan_kind")
+    audit = scan_sub.add_parser(
+        "audit", help="check vault/keyfile/.kpin/git hygiene (default)"
+    )
+    audit.add_argument("--silent", action="store_true", help="suppress SKIP lines")
+    audit.add_argument("--project", help="project name (registry lookup)")
+    audit.add_argument("--config", help="path to a .kpin config file")
+    hist = scan_sub.add_parser("history", help="check shell history for leaked values")
+    hist.add_argument(
+        "--shell", choices=["bash", "zsh", "fish"], help="restrict to one shell"
+    )
+    hist.add_argument("--project", help="project name (registry lookup)")
+    hist.add_argument("--config", help="path to a .kpin config file")
+
     return parser
 
 
@@ -877,6 +1067,7 @@ def dispatch(args) -> int:
         "env": cmd_env,
         "run": cmd_run,
         "validate": cmd_validate,
+        "scan": cmd_scan,
     }
     return handlers[args.command](args)
 
