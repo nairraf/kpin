@@ -233,6 +233,7 @@ def cmd_init(args) -> int:
     from pykeepass import create_database
 
     kp = create_database(str(db), keyfile=str(keyfile))
+    kp.database_name = name
     kp.add_entry(kp.root_group, data["entry"], username="kpin", password="placeholder")
     kp.save()
 
