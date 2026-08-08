@@ -157,10 +157,10 @@ def test_get_attachment_refuses_tty_without_output(isolated_env, mock_vault):
 
 def test_entry_add(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
-    r = run_cli(["entry", "API_KEY", "--config", cfg])
+    r = run_cli(["entry", "add", "API_KEY", "--config", cfg])
     assert r["rc"] == 0
     assert "API_KEY" in r["out"]
-    r2 = run_cli(["entry", "AI Providers", "--config", cfg])
+    r2 = run_cli(["entry", "add", "AI Providers", "--config", cfg])
     assert r2["rc"] == 0
     r3 = run_cli(["list", "entries", "--config", cfg])
     assert r3["rc"] == 0
@@ -172,7 +172,7 @@ def test_entry_add(isolated_env, mock_vault):
 
 def test_entry_add_duplicate_rejected(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
-    r = run_cli(["entry", mock_vault["entry"], "--config", cfg])
+    r = run_cli(["entry", "add", mock_vault["entry"], "--config", cfg])
     assert r["rc"] == 1
     assert "already exists" in r["err"]
 

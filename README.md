@@ -78,7 +78,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.kpin` |
 | `kpin config [KEY [VALUE]]` / `--unset` / `show` | Manage global settings (`vault_dir`, `key_dir`) |
 | `kpin status` | Show the active vault |
-| `kpin entry TITLE` | Create a new entry |
+| `kpin entry add TITLE` | Create a new entry |
 | `kpin list entries` | List entry titles |
 | `kpin list attributes [--entry NAME]` | List attribute names (no values) |
 | `kpin list attachments [--entry NAME]` | List attachment filenames |

@@ -463,14 +463,18 @@ def cmd_entry(args) -> int:
     _require(config)
     kp = _open(config)
 
-    title = args.title
-    if kp.find_entries(title=title, first=True) is not None:
-        print(f"Entry '{title}' already exists", file=sys.stderr)
-        return 1
-    kp.add_entry(kp.root_group, title, username="", password="")
-    kp.save()
-    print(f"Created entry '{title}'")
-    return 0
+    if args.kind == "add":
+        title = args.title
+        if kp.find_entries(title=title, first=True) is not None:
+            print(f"Entry '{title}' already exists", file=sys.stderr)
+            return 1
+        kp.add_entry(kp.root_group, title, username="", password="")
+        kp.save()
+        print(f"Created entry '{title}'")
+        return 0
+
+    print(f"Unknown entry kind: {args.kind}", file=sys.stderr)
+    return 1
 
 
 def cmd_config(args) -> int:
@@ -539,9 +543,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="show active vault")
     add_common(p)
 
-    p = sub.add_parser("entry", help="create a new vault entry")
-    add_common(p)
-    p.add_argument("title", help="entry title")
+    p = sub.add_parser("entry", help="manage vault entries")
+    entry_kind = p.add_subparsers(dest="kind", required=True)
+
+    ep = entry_kind.add_parser("add", help="create a new entry")
+    add_common(ep)
+    ep.add_argument("title", help="entry title")
 
     p = sub.add_parser("list", help="list entries, attributes, or attachments")
     list_kind = p.add_subparsers(dest="kind", required=True)
