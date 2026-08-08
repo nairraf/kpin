@@ -17,6 +17,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+uv.lock
 
 # Node
 node_modules/
