@@ -64,7 +64,7 @@ Attachments are referenced by their exact stored filename:
 
 ```bash
 kpin set attachment server.pem --entry "AI Providers"
-kpin get attachment --entry "AI Providers"         # list attachment names
+kpin list attachments --entry "AI Providers"         # list attachment names
 kpin get attachment --name server.pem --output ./certs   # extract, keeps the name
 kpin run --name server.pem --entry "AI Providers" -- ./start.sh   # temp file as $KPIN_FILE, auto-cleanup
 ```
@@ -78,7 +78,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin init [--project NAME]` | Create a project vault (keyfile-only) + local `.kpin` |
 | `kpin config [KEY [VALUE]]` / `--unset` / `show` | Manage global settings (`vault_dir`, `key_dir`) |
 | `kpin status` | Show the active vault |
-| `kpin entry add TITLE` / `kpin entry list` | Create or list entries |
+| `kpin entry TITLE` | Create a new entry |
 | `kpin list entries` | List entry titles |
 | `kpin list attributes [--entry NAME]` | List attribute names (no values) |
 | `kpin list attachments [--entry NAME]` | List attachment filenames |
@@ -87,7 +87,7 @@ Every secret access is explicit about **type**, **entry**, and (for attachments)
 | `kpin set attachment FILE [--entry NAME]` | Attach a binary file (stored under its filename) |
 | `kpin get password [--entry NAME]` | Reveal an entry's password |
 | `kpin get attribute KEY [--entry NAME]` | Reveal an attribute value |
-| `kpin get attachment [--entry NAME] [--name FILE] [--output DIR\|PATH]` | List attachment names, or extract one to a dir (keeps stored name) or exact path |
+| `kpin get attachment --name FILE [--output DIR\|PATH]` | Extract an attachment to a dir (keeps stored name) or exact path |
 | `kpin env [--entry NAME]` | Print all attributes as `KEY=value` |
 | `kpin run [--entry NAME] [--name FILE] [--output DIR\|PATH] [--keep] [--] CMD...` | Inject attributes into CMD's env; `--name` also materializes that attachment as `$KPIN_FILE` (auto-deleted unless `--keep`) |
 | `kpin validate [KEY...]` | Check required attributes are present |

@@ -92,11 +92,11 @@ def test_get_attachment_to_output_dir_keeps_name(isolated_env, mock_vault):
     assert r["out"].strip() == str(written)
 
 
-def test_get_attachment_listing(isolated_env, mock_vault):
+def test_get_attachment_listing_removed(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
     r = run_cli(["get", "attachment", "--config", cfg])
-    assert r["rc"] == 0
-    assert mock_vault["att_name"] in r["out"].split()
+    assert r["rc"] == 2
+    assert "--name" in r["err"]
 
 
 def test_get_attachment_missing_name(isolated_env, mock_vault):
@@ -106,14 +106,14 @@ def test_get_attachment_missing_name(isolated_env, mock_vault):
     assert "nope.pem" in r["err"]
 
 
-def test_entry_add_and_list(isolated_env, mock_vault):
+def test_entry_add(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
-    r = run_cli(["entry", "add", "API_KEY", "--config", cfg])
+    r = run_cli(["entry", "API_KEY", "--config", cfg])
     assert r["rc"] == 0
     assert "API_KEY" in r["out"]
-    r2 = run_cli(["entry", "add", "AI Providers", "--config", cfg])
+    r2 = run_cli(["entry", "AI Providers", "--config", cfg])
     assert r2["rc"] == 0
-    r3 = run_cli(["entry", "list", "--config", cfg])
+    r3 = run_cli(["list", "entries", "--config", cfg])
     assert r3["rc"] == 0
     titles = r3["out"].splitlines()
     assert mock_vault["entry"] in titles
@@ -123,7 +123,7 @@ def test_entry_add_and_list(isolated_env, mock_vault):
 
 def test_entry_add_duplicate_rejected(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
-    r = run_cli(["entry", "add", mock_vault["entry"], "--config", cfg])
+    r = run_cli(["entry", mock_vault["entry"], "--config", cfg])
     assert r["rc"] == 1
     assert "already exists" in r["err"]
 

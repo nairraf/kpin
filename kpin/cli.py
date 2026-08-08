@@ -329,14 +329,6 @@ def _output_path(output: str, filename: str) -> Path:
     return out
 
 
-def _list_attachments(config: ProjectConfig, entry_name: str | None) -> int:
-    kp = _open(config)
-    entry = _entry(kp, config, entry_name)
-    for attachment in entry.attachments:
-        print(attachment.filename)
-    return 0
-
-
 def cmd_get(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
@@ -352,8 +344,6 @@ def cmd_get(args) -> int:
         return 0
 
     if args.kind == "attachment":
-        if not args.name:
-            return _list_attachments(config, args.entry)
         attachment = _attachment(config, args.name, args.entry)
         data = attachment.binary
         if not args.output:
@@ -464,23 +454,14 @@ def cmd_entry(args) -> int:
     _require(config)
     kp = _open(config)
 
-    if args.kind == "add":
-        title = args.title
-        if kp.find_entries(title=title, first=True) is not None:
-            print(f"Entry '{title}' already exists", file=sys.stderr)
-            return 1
-        kp.add_entry(kp.root_group, title, username="", password="")
-        kp.save()
-        print(f"Created entry '{title}'")
-        return 0
-
-    if args.kind == "list":
-        for entry in kp.entries:
-            print(entry.title)
-        return 0
-
-    print(f"Unknown entry kind: {args.kind}", file=sys.stderr)
-    return 1
+    title = args.title
+    if kp.find_entries(title=title, first=True) is not None:
+        print(f"Entry '{title}' already exists", file=sys.stderr)
+        return 1
+    kp.add_entry(kp.root_group, title, username="", password="")
+    kp.save()
+    print(f"Created entry '{title}'")
+    return 0
 
 
 def cmd_config(args) -> int:
@@ -549,15 +530,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="show active vault")
     add_common(p)
 
-    p = sub.add_parser("entry", help="add or list vault entries")
-    entry_kind = p.add_subparsers(dest="kind", required=True)
-
-    ep = entry_kind.add_parser("add", help="create a new entry")
-    add_common(ep)
-    ep.add_argument("title", help="entry title")
-
-    ep = entry_kind.add_parser("list", help="list entry titles")
-    add_common(ep)
+    p = sub.add_parser("entry", help="create a new vault entry")
+    add_common(p)
+    p.add_argument("title", help="entry title")
 
     p = sub.add_parser("list", help="list entries, attributes, or attachments")
     list_kind = p.add_subparsers(dest="kind", required=True)
@@ -606,12 +581,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("key", help="attribute key")
     sp.add_argument("--entry", help="entry title (default: configured entry)")
 
-    sp = get_kind.add_parser("attachment", help="list or extract an attachment")
+    sp = get_kind.add_parser("attachment", help="extract an attachment")
     add_common(sp)
     sp.add_argument("--entry", help="entry title (default: configured entry)")
     sp.add_argument(
         "--name",
-        help="attachment filename (omit to list stored names)",
+        required=True,
+        help="attachment filename (see 'kpin list attachments')",
     )
     sp.add_argument(
         "--output",

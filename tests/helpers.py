@@ -10,12 +10,21 @@ def run_cli(args, cwd=None, input=None):
     """Run the CLI in-process, capturing stdout/stderr.
 
     Returns a dict with rc, out, err. KpinError is caught and converted to
-    exit code 1 with the message on stderr, mirroring main().
+    exit code 1 with the message on stderr, mirroring main(). argparse usage
+    errors (SystemExit 2) are captured as rc=2 with the message on stderr.
     """
-    parsed = cli.build_parser().parse_args(args)
-
     out_buf = io.StringIO()
     err_buf = io.StringIO()
+
+    try:
+        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+            parsed = cli.build_parser().parse_args(args)
+    except SystemExit as exc:
+        return {
+            "rc": exc.code or 0,
+            "out": out_buf.getvalue(),
+            "err": err_buf.getvalue(),
+        }
 
     if cwd:
         old = os.getcwd()
