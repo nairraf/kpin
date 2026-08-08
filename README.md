@@ -4,11 +4,30 @@ Inject secrets from a KeePassXC vault into dev commands — without printing the
 
 `kpin` gives you a KeePassXC-backed vault per project, and injects secrets into a child process environment (or materializes a binary attachment to a file) so values never land in shell history, logs, or an agent's context.
 
-## Why
+## The problem
 
-- **Env-var-only tools (kprun, op run) can't do attachments or files.** `kpin run` injects env vars and can also materialize a named binary attachment (e.g. Android keystore, certificate) to a temp file or a directory of your choice. This covers the cases the others miss.
-- **One database = one trust boundary.** Each project has its own vault + keyfile, so project A cannot read project B. No per-entry permissions needed.
-- **Cross-platform.** Pure-Python stdlib + `pykeepass` + `keepassxc-cli` (optional). Works on Linux, macOS, Windows.
+Every project ends up reinventing secret management. Keys end up in `.env` files that get committed by accident, in shell history, in notes apps, or pasted into chat. When a teammate joins or a machine is rebuilt, there's no single source of truth — just a scramble to reconstruct what's set where.
+
+The tools that exist take two shapes, and both miss the mark for day-to-day dev work:
+
+- **Env-var-only injectors** (kprun, `op run`) inject variables but can't handle *files* — Android keystores, certificates, Firebase configs. You still have to keep those somewhere.
+- **Git/file-centric tools** (SOPS, age) encrypt files in the repo but don't inject anything at runtime. Values land in plaintext the moment a process reads them.
+
+`kpin` is built around the cases that actually come up in dev:
+
+- secrets **and** binary files, from one place
+- injected into a single child process, never printed
+- per-project isolation that is structural, not a convention
+
+## The mental model
+
+Three ideas make kpin easy to use without thinking.
+
+**One vault per project, the keyfile is the key.** Each project gets its own KDBX database *and* its own keyfile. Project A literally cannot open project B's vault — there is no "isolation by convention" to trust or misconfigure. The keyfile never leaves your machine and is never synced.
+
+**The default entry + attributes is the everyday case.** You store secrets as attributes on the vault's **default** entry. The attribute *name* becomes the environment variable name, so `API_KEY` stored as an attribute shows up as `$API_KEY` in your process. No entry names, no flags — you just set and run.
+
+**Named entries are for environments and configs.** When the same project needs different secret sets — production vs. staging vs. test, or separate credentials for separate services — create one entry per environment and pick it at runtime with `--entry NAME`. Same code, same commands, different secrets. Attachments (files) work the same way per entry.
 
 ## Install
 
@@ -19,7 +38,7 @@ uv tool install --editable .   # puts `kpin` on PATH
 kpin --version
 ```
 
-Requires a KeePassXC-compatible KDBX vault. Install KeePassXC (optional, for `kpin init` and GUI editing):
+Requires a KeePassXC-compatible KDBX vault. KeePassXC is optional (needed for `kpin init` and GUI editing):
 - Linux: `sudo apt install keepassxc` / `dnf install keepassxc`
 - macOS: `brew install --cask keepassxc`
 - Windows: download from https://keepassxc.org
@@ -41,14 +60,32 @@ That's it. No entry flags needed. To check what you have or reveal a value:
 kpin env                         # list all attributes as KEY=value
 kpin validate API_KEY DB_URL     # exit 1 if any are missing
 kpin get attribute API_KEY       # reveal one value (human/pipe only)
+kpin list attributes             # list attribute names (no values)
 ```
 
-## Using named entries
+## Environments with named entries
 
-Every secret can also target a specific entry. Create one, then reference it with `--entry NAME`; omit `--entry` and it goes to the default entry.
+When the same project needs different secret sets, create one entry per environment and switch at runtime. The example below uses prod/qa, but the pattern covers any split — staging, test configs, separate service credentials.
 
 ```bash
-kpin entry add "AI Providers"          # create an entry
+kpin entry add prod
+kpin entry add qa
+
+# set the same attribute on each environment
+kpin set attribute API_KEY --stdin --entry prod
+kpin set attribute API_KEY --stdin --entry qa
+kpin set attribute DB_URL --stdin --entry prod
+kpin set attribute DB_URL --stdin --entry qa
+
+# pick the environment at runtime — same code, different secrets
+kpin run --entry prod -- ./deploy.sh
+kpin run --entry qa   -- ./deploy.sh
+```
+
+Omit `--entry` and commands target the **default** entry. Everything works per entry — attributes, passwords, and attachments:
+
+```bash
+kpin entry add "AI Providers"
 kpin set attribute openai_token --stdin --entry "AI Providers"
 kpin get attribute openai_token --entry "AI Providers"
 
@@ -58,9 +95,9 @@ kpin get password --entry "API Keys"
 kpin get password                            # no --entry = default entry
 ```
 
-## Binary attachments (certificates, keystores, configs)
+## Files & attachments (certificates, keystores, configs)
 
-Attachments are referenced by their exact stored filename:
+Some secrets aren't strings — they're files that have to exist on disk. Attachments are referenced by their exact stored filename:
 
 ```bash
 kpin set attachment server.pem --entry "AI Providers"
@@ -68,6 +105,8 @@ kpin list attachments --entry "AI Providers"         # list attachment names
 kpin get attachment --name server.pem --output ./certs   # extract, keeps the name
 kpin run --name server.pem --entry "AI Providers" -- ./start.sh   # temp file as $KPIN_FILE, auto-cleanup
 ```
+
+`kpin run --name FILE` materializes the attachment to a temp file, sets `$KPIN_FILE` in the child env, and deletes the file when the child exits (unless `--keep`). Extracted files are written owner-only (`0600`).
 
 ## Commands
 
