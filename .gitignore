@@ -1,5 +1,5 @@
 # Agent files (memory system, skills, config) — never commit
-agents
+.agents
 AGENTS.md
 
 # Vaults are machine-local — never commit keyfiles or DBs
