@@ -79,6 +79,7 @@ def isolated_env(mock_vault, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(mock_vault["config_dir"].parent))
     monkeypatch.setenv("HOME", str(mock_vault["home"]))
     monkeypatch.setenv("KPIN_CONFIG", "")
+    monkeypatch.chdir(mock_vault["home"])
 
     cfg_file = mock_vault["home"] / "cfg.json"
     cfg_file.write_text(
