@@ -71,6 +71,23 @@ def test_validate_specific_missing(isolated_env, mock_vault):
     assert "MOCK_GONE: missing" in r["out"]
 
 
+def test_validate_named_entry(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(["validate", "--entry", mock_vault["other"], "--config", cfg])
+    assert r["rc"] == 0
+    assert "MOCK_OTHER: present" in r["out"]
+    assert "MOCK_SECRET" not in r["out"]
+
+
+def test_validate_named_entry_missing(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(
+        ["validate", "--entry", mock_vault["other"], "MOCK_GONE", "--config", cfg]
+    )
+    assert r["rc"] == 1
+    assert "MOCK_GONE: missing" in r["out"]
+
+
 def test_get_attachment_to_output_dir_keeps_name(isolated_env, mock_vault):
     cfg = str(mock_vault["home"] / "cfg.json")
     out_dir = mock_vault["home"] / "certs"
@@ -90,6 +107,27 @@ def test_get_attachment_to_output_dir_keeps_name(isolated_env, mock_vault):
     written = out_dir / mock_vault["att_name"]
     assert written.read_bytes() == mock_vault["att_bytes"]
     assert r["out"].strip() == str(written)
+    assert (written.stat().st_mode & 0o777) == 0o600
+
+
+def test_get_attachment_output_exact_path_0600(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    exact = str(mock_vault["home"] / "renamed.json")
+    r = run_cli(
+        [
+            "get",
+            "attachment",
+            "--name",
+            mock_vault["att_name"],
+            "--output",
+            exact,
+            "--config",
+            cfg,
+        ]
+    )
+    assert r["rc"] == 0
+    assert Path(exact).read_bytes() == mock_vault["att_bytes"]
+    assert (Path(exact).stat().st_mode & 0o777) == 0o600
 
 
 def test_get_attachment_listing_removed(isolated_env, mock_vault):
@@ -104,6 +142,17 @@ def test_get_attachment_missing_name(isolated_env, mock_vault):
     r = run_cli(["get", "attachment", "--name", "nope.pem", "--config", cfg])
     assert r["rc"] == 1
     assert "nope.pem" in r["err"]
+
+
+def test_get_attachment_refuses_tty_without_output(isolated_env, mock_vault):
+    cfg = str(mock_vault["home"] / "cfg.json")
+    r = run_cli(
+        ["get", "attachment", "--name", mock_vault["att_name"], "--config", cfg],
+        tty=True,
+    )
+    assert r["rc"] == 1
+    assert "terminal" in r["err"]
+    assert r["out"] == ""
 
 
 def test_entry_add(isolated_env, mock_vault):

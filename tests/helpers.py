@@ -6,15 +6,18 @@ import sys
 from kpin import cli
 
 
-def run_cli(args, cwd=None, input=None):
+def run_cli(args, cwd=None, input=None, tty=False):
     """Run the CLI in-process, capturing stdout/stderr.
 
     Returns a dict with rc, out, err. KpinError is caught and converted to
     exit code 1 with the message on stderr, mirroring main(). argparse usage
     errors (SystemExit 2) are captured as rc=2 with the message on stderr.
+    tty=True simulates an interactive terminal (stdout.isatty() -> True).
     """
     out_buf = io.StringIO()
     err_buf = io.StringIO()
+    if tty:
+        out_buf.isatty = lambda: True
 
     try:
         with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):

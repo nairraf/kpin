@@ -347,10 +347,16 @@ def cmd_get(args) -> int:
         attachment = _attachment(config, args.name, args.entry)
         data = attachment.binary
         if not args.output:
+            if sys.stdout.isatty():
+                raise KpinError(
+                    "Refusing to write binary attachment to a terminal. "
+                    "Use --output DIR|PATH or pipe to a file."
+                )
             sys.stdout.buffer.write(data)
             return 0
         out = _output_path(args.output, attachment.filename)
         out.write_bytes(data)
+        out.chmod(0o600)
         print(out)
         return 0
 
@@ -389,6 +395,7 @@ def cmd_run(args) -> int:
         if args.output:
             out = _output_path(args.output, attachment.filename)
             out.write_bytes(attachment.binary)
+            out.chmod(0o600)
             path = str(out)
         else:
             with tempfile.NamedTemporaryFile(delete=False, prefix="kpin-") as fh:
@@ -414,7 +421,7 @@ def cmd_validate(args) -> int:
     config = resolve_config(args.project, args.config)
     _require(config)
     kp = _open(config)
-    entry = _entry(kp, config)
+    entry = _entry(kp, config, args.entry)
     names = args.keys or [p for p in entry.custom_properties]
     missing = [k for k in names if not entry.get_custom_property(k)]
     for k in names:
@@ -614,6 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate", help="check required secrets are present")
     add_common(p)
+    p.add_argument("--entry", help="entry title (default: configured entry)")
     p.add_argument("keys", nargs="*")
 
     return parser
