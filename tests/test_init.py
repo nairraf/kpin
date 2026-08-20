@@ -23,13 +23,28 @@ def test_init_creates_vault_in_config_vault_dir(isolated_env, mock_vault, monkey
 
     reg = json.loads((mock_vault["config_dir"] / "projects.json").read_text())
     assert "p1" in reg
-    assert reg["p1"]["db"] == str(vault_dir / "p1.kdbx")
-    assert reg["p1"]["keyfile"] == str(key_dir / "p1.key")
+    assert reg["p1"]["db"] == "~/myvaults/p1.kdbx"
+    assert reg["p1"]["keyfile"] == "~/mykeys/p1.key"
 
     local = proj / ".kpin"
     assert local.exists()
-    assert json.loads(local.read_text())["db"] == str(vault_dir / "p1.kdbx")
-    assert json.loads(local.read_text())["keyfile"] == str(key_dir / "p1.key")
+    assert json.loads(local.read_text())["db"] == "~/myvaults/p1.kdbx"
+    assert json.loads(local.read_text())["keyfile"] == "~/mykeys/p1.key"
+
+
+def test_init_defaults_store_tilde_paths(isolated_env, mock_vault, monkeypatch):
+    monkeypatch.setenv("KPIN_CONFIG", "")
+    proj = mock_vault["home"] / "proj_default"
+    proj.mkdir()
+    r = run_cli(["init", "--project", "p_def"], cwd=str(proj))
+    assert r["rc"] == 0
+    assert (mock_vault["home"] / ".kpin" / "p_def.kdbx").exists()
+    assert (mock_vault["home"] / ".keys" / "p_def.key").exists()
+
+    local = proj / ".kpin"
+    data = json.loads(local.read_text())
+    assert data["db"] == "~/.kpin/p_def.kdbx"
+    assert data["keyfile"] == "~/.keys/p_def.key"
 
 
 def test_init_refuses_existing_vault(isolated_env, mock_vault, monkeypatch):

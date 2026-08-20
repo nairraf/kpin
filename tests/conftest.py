@@ -120,3 +120,18 @@ def write_registry(isolated_env, registry_entry, monkeypatch):
         return data
 
     return _write
+
+
+@pytest.fixture(autouse=True)
+def cleanup_temp_kpin():
+    for p in Path(tempfile.gettempdir()).glob("kpin-*"):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    yield
+    for p in Path(tempfile.gettempdir()).glob("kpin-*"):
+        try:
+            p.unlink()
+        except OSError:
+            pass

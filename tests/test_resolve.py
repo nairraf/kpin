@@ -87,3 +87,60 @@ def test_local_vault_file_discovery(isolated_env, write_registry, mock_vault):
     r = run_cli(["status"], cwd=str(project_dir))
     assert r["rc"] == 0
     assert "project: local" in r["out"]
+
+
+def test_portable_tilde_path_resolution(isolated_env, mock_vault):
+    project_dir = mock_vault["home"] / "proj_tilde"
+    project_dir.mkdir()
+    (project_dir / ".kpin").write_text(
+        json.dumps(
+            {
+                "name": "tilde_proj",
+                "db": "~/vault/test.kdbx",
+                "keyfile": "~/vault/test.key",
+                "entry": "default",
+            }
+        )
+    )
+    r = run_cli(["status"], cwd=str(project_dir))
+    assert r["rc"] == 0
+    assert "project: tilde_proj" in r["out"]
+    assert str(mock_vault["db"]) in r["out"]
+
+
+def test_cross_platform_legacy_linux_path_fallback(isolated_env, mock_vault):
+    project_dir = mock_vault["home"] / "proj_legacy_linux"
+    project_dir.mkdir()
+    (project_dir / ".kpin").write_text(
+        json.dumps(
+            {
+                "name": "legacy_linux",
+                "db": "/home/ian/vault/test.kdbx",
+                "keyfile": "/home/ian/vault/test.key",
+                "entry": "default",
+            }
+        )
+    )
+    r = run_cli(["status"], cwd=str(project_dir))
+    assert r["rc"] == 0
+    assert "project: legacy_linux" in r["out"]
+    assert str(mock_vault["db"]) in r["out"]
+
+
+def test_cross_platform_legacy_macos_path_fallback(isolated_env, mock_vault):
+    project_dir = mock_vault["home"] / "proj_legacy_macos"
+    project_dir.mkdir()
+    (project_dir / ".kpin").write_text(
+        json.dumps(
+            {
+                "name": "legacy_macos",
+                "db": "/Users/ian/vault/test.kdbx",
+                "keyfile": "/Users/ian/vault/test.key",
+                "entry": "default",
+            }
+        )
+    )
+    r = run_cli(["status"], cwd=str(project_dir))
+    assert r["rc"] == 0
+    assert "project: legacy_macos" in r["out"]
+    assert str(mock_vault["db"]) in r["out"]

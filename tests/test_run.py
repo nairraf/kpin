@@ -408,10 +408,13 @@ def test_run_attach_keep_persists_temp_files(isolated_env, mock_vault):
     )
     assert r["rc"] == 0
     kept = open(outfile).read().strip()
-    assert kept.startswith("/tmp/kpin-")
-    assert Path(kept).exists()
-    assert Path(kept).read_bytes() == mock_vault["att_bytes"]
-    os.unlink(kept)
+    try:
+        assert Path(kept).name.startswith("kpin-")
+        assert Path(kept).exists()
+        assert Path(kept).read_bytes() == mock_vault["att_bytes"]
+    finally:
+        if os.path.exists(kept):
+            os.unlink(kept)
 
 
 def test_run_attach_invalid_specs(isolated_env, mock_vault, monkeypatch):

@@ -138,9 +138,38 @@ def _find_local_file() -> Path | None:
     return None
 
 
+def _to_portable_path(raw_base: str, filename: str) -> str:
+    """Format a base directory setting and filename preserving ~ when within user's home."""
+    base = raw_base.strip()
+    if base.startswith("~"):
+        return f"{base.rstrip('/')}/{filename}"
+    p = Path(base).expanduser()
+    try:
+        rel = p.resolve().relative_to(Path.home().resolve())
+        return f"~/{rel}/{filename}"
+    except (ValueError, RuntimeError):
+        return str(p / filename)
+
+
+def _resolve_portable_path(raw: str) -> Path:
+    """Resolve a path with ~ expansion and cross-platform OS home fallback."""
+    if not raw:
+        return Path("")
+    p = Path(raw).expanduser()
+    if p.exists():
+        return p
+    # Cross-platform fallback: e.g. /home/<user>/... on macOS or /Users/<user>/... on Linux
+    m = re.match(r"^/(?:home|Users)/[^/]+/(.+)$", raw)
+    if m:
+        candidate = (Path.home() / m.group(1)).resolve()
+        if candidate.exists():
+            return candidate
+    return p
+
+
 def resolve_config(project: str | None, config_path: str | None) -> ProjectConfig:
     if config_path:
-        p = Path(config_path).expanduser()
+        p = _resolve_portable_path(config_path)
         if not p.is_file():
             raise KpinError(f"Config file not found: {p}")
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -167,8 +196,8 @@ def resolve_config(project: str | None, config_path: str | None) -> ProjectConfi
 
 
 def _build(name: str, data: dict) -> ProjectConfig:
-    db = Path(data.get("db", "")).expanduser()
-    keyfile = Path(data.get("keyfile", "")).expanduser()
+    db = _resolve_portable_path(data.get("db", ""))
+    keyfile = _resolve_portable_path(data.get("keyfile", ""))
     entry = data.get("entry", "default")
     extra = _parse_extra(data.get("clean_env_extra"))
     return ProjectConfig(
@@ -224,15 +253,15 @@ def _entry(kp, config: ProjectConfig, entry_name: str | None = None):
 
 def cmd_init(args) -> int:
     name = args.project or Path.cwd().name
-    vault_dir = Path(_setting("vault_dir")).expanduser()
-    key_dir = Path(_setting("key_dir")).expanduser()
+    vault_dir_setting = _setting("vault_dir")
+    key_dir_setting = _setting("key_dir")
     data = {
         "name": name,
-        "db": str(vault_dir / f"{name}.kdbx"),
-        "keyfile": str(key_dir / f"{name}.key"),
+        "db": _to_portable_path(vault_dir_setting, f"{name}.kdbx"),
+        "keyfile": _to_portable_path(key_dir_setting, f"{name}.key"),
         "entry": "default",
     }
-    db, keyfile = Path(data["db"]), Path(data["keyfile"])
+    db, keyfile = Path(data["db"]).expanduser(), Path(data["keyfile"]).expanduser()
     if db.exists() or keyfile.exists():
         print(f"Vault already exists for '{name}' at {db}", file=sys.stderr)
         return 1
